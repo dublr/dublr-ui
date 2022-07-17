@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Dublr Token</title>
+        <link rel="shortcut icon" href="https://raw.githubusercontent.com/dublr/dublr/main/icon.png" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/picnic@7.1.0/picnic.min.css" />
+        <link rel="stylesheet" href="tabs.css" />
+        <style>
+            h1 { font-weight: normal; }
+            tt { font-size: 12pt; }
+        </style>
+        <script type="application/javascript" src="metamask-onboarding.bundle.js"></script>
+        <script type="application/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.6.9/ethers.umd.min.js"></script>
+    </head>
+    <body>
+        <img style="display: block; margin-left: auto; margin-right: auto;" height="88pt" width="88pt" src="https://raw.githubusercontent.com/dublr/dublr/main/icon.png">
+        
+        <h1>Dublr Token</h1>
+        
+        <div style="text-align: center;">
+            <button id="onboard"><span><img width="28pt" height="28pt" style="vertical-align: middle; margin-top:-3pt;" src="metamask-icon.svg"/>&nbsp;<span id="onboard-text">Connect</span></span></button>
+            <br/>
+            <span id="wallet-info"></span>
+        </div>
+
+        <div class="tab-wrap">
+			<input type="radio" id="tab1" name="tabGroup1" class="tab"/>
+			<label for="tab1">About</label>
+		
+			<input type="radio" id="tab2" name="tabGroup1" class="tab"/>
+			<label for="tab2">Orderbook</label>
+		
+			<input type="radio" id="tab3" name="tabGroup1" class="tab" checked=""/><!-- TODO: change default tab -->
+			<label for="tab3">Buy</label>
+		
+			<input type="radio" id="tab4" name="tabGroup1" class="tab"/>
+			<label for="tab4">Sell</label>
+
+            <div class="tab__content">
+                <p><b>Dublr is an ultra-secure fungible token smart contract</b> that implements several token standards (ERC20, ERC777, ERC1363, ERC4524, EIP2612). Additionally, Dublr implements its own built-in decentralized exchange (DEX) &ndash; it is both a token and a DEX.</p>
+                <p>Supply of DUBLR tokens is generated and distributed on-demand by minting (rather than by ICO or airdrop). Minting occurs when a buyer tries to buy tokens and there are no tokens listed for sale on the DEX below the mint price. The mint price grows exponentially, doubling every 90 days for 30 doubling periods (~7.5 years): the minting of DUBLR tokens becomes twice as expensive every 90 days, or 0.77% more expensive per day, on a compound interest curve. After 30 doubling periods, minting will be disabled, fixing total supply.</p>
+                <p>Eventually as the mint price becomes exorbitant, but before minting is actually disabled, it is expected that the cost of minting will become uneconomical, and the supply of tokens for sale below the mint price will meet or outstrip demand, thereby causing the total supply to behave as if it is fixed and finite, and causing the DUBLR token to trade as any other ERC20 token. (See <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a> re. forward-looking statements.)
+                <p>The growth of the mint price sets a hard <i>upper</i> bound on how fast the price of DUBLR can grow relative to ETH, enforced by increasing total supply of tokens to meet demand whenever the demand outstrips the supply of tokens for sale below the mint price. There is no lower bound on price, and minting is an inherently deflationary activity, so there are no guarantees or promises, express or implied, about the profitability of purchasing DUBLR tokens.</p>
+                <p>Learn more at the <a href="https://github.com/dublr/dublr">Dublr</a> GitHub page.</p>
+            </div>
+
+            <div class="tab__content">
+                <h3>Orderbook</h3>
+
+                <p>Tokens currently listed for sale are shown below. Only tokens listed at or below the mint price may be bought.</p>
+
+                <table class="primary" style="margin-left: auto; margin-right: auto;">
+                    <thead>
+                        <tr>
+                            <th style="text-align: right;">Price<br/>(ETH per DUBLR)</th>
+                            <th style="text-align: right;">Amount<br/>(DUBLR)</th>
+                            <th style="text-align: right;">Amount<br/>(ETH)</th>
+                            <th style="text-align: right;">Cumul Amount<br/>(ETH)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orderbook-tbody">
+                    </tbody>
+                </table>
+
+                <div style="text-align: center; margin: 12pt;" id="orderbook-empty"></div>
+
+                <div style="text-align: center; margin: 12pt;"><b>Mint price (ETH per DUBLR):</b> <tt><span id="mint-price"></span></tt></div>
+            </div>
+            
+            <div class="tab__content">
+                <p><b>Buying DUBLR tokens</b> exchanges ETH for DUBLR tokens in your MetaMask wallet. Tokens are bought from sell orders listed on the built-in decentralized exchange (DEX), in increasing order of price, until the current mint price is reached. New tokens are then minted at the current mint price using any remaining ETH balance.</p>
+                <p><b>Slippage protection:</b> The maximum amount of acceptable slippage is specified as a percentage, to prevent sudden unexpected increase in price due to somebody else buying the sell orders you intended to buy right before your transaction is run.</p>
+                <p><b>Gas requirement:</b> Calling the buy function may result in multiple sell orders being purchased from the DEX, and each purchase of a sell order consumes gas. Sufficient gas must be supplied to buy the requested sell orders. If a buy request can't be filled without gas exhaustion, the Dublr contract will try to buy as many tokens as possible and then refund the unspent ETH balance. Therefore, you may need to call the buy function multiple times to purchase the desired number of tokens.
+                <p><b>Fees:</b> There are no market taker fees for buying tokens listed on the built-in DEX. All ETH that is spent to mint new tokens is collected as a nonrefundable minting fee.</p>
+                                    
+                <h3>Buy DUBLR tokens:</h3>
+                <form>
+                    <div style="margin-top: 12pt;">
+                        <label for="buy-amount">Amount to spend on DUBLR tokens (ETH)</label>
+                        <input id="buy-amount" type="text" value="1.0" placeholder="Amount">
+                    </div>
+
+                    <div style="margin-top: 12pt;">
+                        <label for="gas-est">Gas estimate (ETH)</label>
+                        <input id="gas-est" type="text" value="1.0" placeholder="Amount">
+                    </div>
+
+                    <div style="margin-top: 12pt;">
+                        <label for="gas-prov">Gas to provide (ETH)</label>
+                        <input id="gas-prov" type="text" value="1.0" placeholder="Amount">
+                    </div>
+
+                    <div style="margin-top: 12pt;">
+                        <label for="slippage-limit-percent">Max allowable slippage (%)</label>
+                        <input id="slippage-limit-percent" type="text" value="1.0" placeholder="Amount">
+                    </div>
+
+                    <div style="margin-top: 12pt;">
+                        <label for="min-dublr">Min DUBLR tokens that must be bought to prevent slippage (DUBLR)</label>
+                        <input id="min-dublr" type="text" value="1.0" placeholder="Amount">
+                    </div>
+
+                    <div style="margin-top: 18pt; text-align: center;">
+                        <input type="checkbox" id="terms_buy">
+                        <label for="terms_buy" class="checkable">I agree to the Dublr <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a>.</label>
+                    </div>
+
+                    <div style="margin: 12pt; text-align: center;">
+                        <button>Buy DUBLR tokens</button>
+                    </div>
+                </form>
+                
+                <!-- TODO: estimate when 70% of gas will be used up by orders. -->
+                <!-- TODO: check ETH amount is not greater than wallet balance. -->
+                <!-- TODO: check ETH amount is not greater than wallet balance. -->
+                
+            </div>
+
+            <div class="tab__content">
+                <p><b>Selling DUBLR tokens</b> lists some of your DUBLR tokens for sale at a specified price, creating a sell order in the orderbook. These tokens remain listed until canceled or bought by a buyer. If bought, the ETH value of the purchased tokens are transferred from the buyer to the seller (minus a small fee, see below).</p>
+                <p><b>Tokens deducted from balance while listed:</b> During the time that tokens are listed for sale, the amount of the sell order is deducted from the DUBLR balance of the seller, to prevent double-spending. If the sell order is later canceled before all listed tokens are bought, the unbought tokens are returned to the seller's token balance.</p>
+                <p><b>One order per seller at one time:</b> If there is already a sell order in the order book for your wallet, then that old order is automatically canceled before the new order is placed (there may only be one order per seller wallet in the orderbook at one time).</p>
+                <p><b>Fees:</b> A nonrefundable market maker fee of 0.15% is subtracted from the ETH amount transferred from the buyer to the seller when tokens are bought. This fee is lower than most DEX fees, e.g. 0.3% for Uniswap, and lower than the total fee for most centralized exchange fees, e.g. 0.2% for Binance (0.1% market maker fee plus 0.1% market taker fee).</p>
+
+                <!-- TODO: check min amount is satisfied, and show min value in label for amount, every time price is updated -->
+                <!-- TODO: check amount is less than DUBLR balance -->
+                <!-- TODO: show warning if price is above mint price -->
+                <!-- TODO: require checkbox is checked for "I agree to the T&C" -->
+                <!-- TODO: add Google Analytics tracker -->
+                <!-- TODO: use dublr.estimateGas.methodName({gasLimit: 3e7}) -->
+
+                <h3>Sell DUBLR tokens:</h3>
+
+                <div style="margin-top: 18pt; text-align: center;">
+                    <input type="checkbox" id="terms_buy">
+                    <label for="terms_buy" class="checkable">I agree to the Dublr <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a>.</label>
+                </div>
+
+                <div style="margin: 12pt; text-align: center;">
+                    <button>Sell DUBLR tokens</button>
+                </div>
+            </div>
+        </div>
+        <br/><br/>
+       
+        <script type="application/javascript" src="dataflow.js"></script>
+        <script type="application/javascript" src="dublr-ui.js"></script>
+    </body>
+</html>
+
