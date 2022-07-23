@@ -1,7 +1,6 @@
 
 let DEBUG_DATAFLOW = false;
 
-// From https://stackoverflow.com/a/9924463/3950982
 var STRIP_COMMENTS = /((\/\/.*$)|(\/\*[\s\S]*?\*\/))/mg;
 var ARGUMENT_NAMES = /([^\s,]+)/g;
 function getParamNames(func) {
@@ -40,6 +39,9 @@ const dataflow = {
     
     register: function(...fns) {
         for (const fn of fns) {
+            if (!(fn instanceof Function)) {
+                throw new Error("Parameter is not a function: " + fn);
+            }
             if (fn.constructor.name !== "AsyncFunction") {
                 throw new Error("Function " + fn.name + " is not async. Only async functions can be registered.");
             }
@@ -174,13 +176,19 @@ const dataflow = {
                     const prevDirtyNodeNames = dirtyNodeNames;
                     dirtyNodeNames = [];
                     
-                    // Set the node value to the function return value for all functions that were called
+                    // Set the node value to the function return value for all functions that were called,
+                    // and mark any downstream dependencies as dirty (ready for the next wave of change
+                    // propagation) if all their upstream dependencies have been marked as resolved
+                    // (no longer dirty, or unchanged).
                     for (var i = 0; i < prevDirtyNodeNames.length; i++) {
                         setNodeValue(prevDirtyNodeNames[i], await promises[i], dirtyNodeNames);
                     }
                 }
             }
             dataflow.inProgress = false;
+            if (DEBUG_DATAFLOW) {
+                console.log("Dataflow ended");
+            }
         }
     },
 };

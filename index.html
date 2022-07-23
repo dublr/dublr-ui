@@ -10,6 +10,7 @@
         <style>
             h1 { font-weight: normal; }
             tt { font-size: 12pt; }
+            :disabled { background-color: WhiteSmoke; }
         </style>
         <script type="application/javascript" src="metamask-onboarding.bundle.js"></script>
         <script type="application/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.6.9/ethers.umd.min.js"></script>
@@ -74,37 +75,87 @@
                 <p><b>Slippage protection:</b> The maximum amount of acceptable slippage is specified as a percentage, to prevent sudden unexpected increase in price due to somebody else buying the sell orders you intended to buy right before your transaction is run.</p>
                 <p><b>Gas requirement:</b> Calling the buy function may result in multiple sell orders being purchased from the DEX, and each purchase of a sell order consumes gas. Sufficient gas must be supplied to buy the requested sell orders. If a buy request can't be filled without gas exhaustion, the Dublr contract will try to buy as many tokens as possible and then refund the unspent ETH balance. Therefore, you may need to call the buy function multiple times to purchase the desired number of tokens.
                 <p><b>Fees:</b> There are no market taker fees for buying tokens listed on the built-in DEX. All ETH that is spent to mint new tokens is collected as a nonrefundable minting fee.</p>
+                <p><b>SEC compliance disclaimers:</b> No warranties or promises, express or implied, are made about the value or profitability of DUBLR tokens. Purchasing and use of DUBLR tokens is entirely at the purchaser's own risk. Purchasing DUBLR tokens does not constitute investment in a common enterprise, since no enterprise is attached to these tokens. Collected fees will not be used to fund any action beneficial to DUBLR token holders, and cannot be used to fund ongoing maintenance or improvement of the Dublr smart contract code, since no changes can be made to the deployed Dublr contract code after deployment.</p>
                                     
                 <h3>Buy DUBLR tokens:</h3>
                 <form>
                     <div style="margin-top: 12pt;">
-                        <label for="buy-amount">Amount to spend on DUBLR tokens (ETH)</label>
-                        <input id="buy-amount" type="text" value="1.0" placeholder="Amount">
+                        <label>
+                            <input class="reactive-input" type="checkbox" id="allowBuying" checked="true">
+                            <span class="checkable">
+                                Allow buying of sell orders
+                            </span>
+                        </label>
+                        <br/>
+                        <label>
+                            <input class="reactive-input" type="checkbox" id="allowMinting" checked="true">
+                            <span class="checkable">
+                                Allow minting of new tokens
+                            </span>
+                        </label>
                     </div>
 
-                    <div style="margin-top: 12pt;">
-                        <label for="gas-est">Gas estimate (ETH)</label>
-                        <input id="gas-est" type="text" value="1.0" placeholder="Amount">
-                    </div>
+                    <article class="card" style="margin-top: 12pt;">
+                        <header>
+                            Amount to spend
+                        </header>
+                        <footer>
+                            <div>
+                                <label for="buyAmount">Amount to spend on DUBLR tokens (ETH) -- decimal numbers OK</label>
+                                <input class="reactive-input" id="buyAmount" type="text">
+                            </div>
+                        </footer>
+                    </article>
 
-                    <div style="margin-top: 12pt;">
-                        <label for="gas-prov">Gas to provide (ETH)</label>
-                        <input id="gas-prov" type="text" value="1.0" placeholder="Amount">
-                    </div>
+                    <article class="card" style="margin-top: 12pt;">
+                        <header>
+                            Gas
+                        </header>
+                        <footer>
+                            <div>
+                                <label for="gas-est">Gas estimate (ETH)</label>
+                                <input id="gas-est" type="text" value="(unknown)" disabled>
+                            </div>
+                            <div style="margin-top: 12pt;">
+                                <label for="gasProvided">Max gas to provide (ETH)</label>
+                                <input class="reactive-input" id="gasProvided" type="text">
+                            </div>
+                        </footer>
+                    </article>
 
-                    <div style="margin-top: 12pt;">
-                        <label for="slippage-limit-percent">Max allowable slippage (%)</label>
-                        <input id="slippage-limit-percent" type="text" value="1.0" placeholder="Amount">
-                    </div>
+                    <article class="card" style="margin-top: 12pt;">
+                        <header>
+                            Slippage prevention
+                        </header>
+                        <footer>
+                            <div>
+                                <label for="min-dublr">Amount of DUBLR that ETH amount is expected to buy (DUBLR)</label>
+                                <input id="min-dublr" type="text" disabled>
+                            </div>
 
-                    <div style="margin-top: 12pt;">
-                        <label for="min-dublr">Min DUBLR tokens that must be bought to prevent slippage (DUBLR)</label>
-                        <input id="min-dublr" type="text" value="1.0" placeholder="Amount">
-                    </div>
+                            <div style="margin-top: 12pt;">
+                                <label for="slippage-limit-percent">Max allowable slippage (%)</label>
+                                <input id="slippage-limit-percent" type="text" value="1">
+                            </div>
+
+                            <div style="margin-top: 12pt;">
+                                <label for="min-dublr">Min DUBLR tokens that must be bought to prevent slippage (DUBLR)</label>
+                                <input id="min-dublr" type="text" disabled>
+                            </div>
+                        </footer>
+                    </article>
+
+                    <article class="card" style="margin-top: 12pt;">
+                        <header>
+                            Execution plan
+                        </header>
+                        <footer id="execution-plan">
+                        </footer>
+                    </article>
 
                     <div style="margin-top: 18pt; text-align: center;">
                         <input type="checkbox" id="terms_buy">
-                        <label for="terms_buy" class="checkable">I agree to the Dublr <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a>.</label>
+                        <label for="terms_buy" class="checkable">I agree to the full Dublr <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a>.</label>
                     </div>
 
                     <div style="margin: 12pt; text-align: center;">
@@ -123,6 +174,7 @@
                 <p><b>Tokens deducted from balance while listed:</b> During the time that tokens are listed for sale, the amount of the sell order is deducted from the DUBLR balance of the seller, to prevent double-spending. If the sell order is later canceled before all listed tokens are bought, the unbought tokens are returned to the seller's token balance.</p>
                 <p><b>One order per seller at one time:</b> If there is already a sell order in the order book for your wallet, then that old order is automatically canceled before the new order is placed (there may only be one order per seller wallet in the orderbook at one time).</p>
                 <p><b>Fees:</b> A nonrefundable market maker fee of 0.15% is subtracted from the ETH amount transferred from the buyer to the seller when tokens are bought. This fee is lower than most DEX fees, e.g. 0.3% for Uniswap, and lower than the total fee for most centralized exchange fees, e.g. 0.2% for Binance (0.1% market maker fee plus 0.1% market taker fee).</p>
+                <p><b>SEC compliance disclaimers:</b> No warranties or promises, express or implied, are made about the value or profitability of DUBLR tokens. The use and sale of DUBLR tokens is entirely at the purchaser's own risk. DUBLR tokens may not be able to be sold without incurring loss, or may not be able to be sold at all if there is insufficient demand. Collected fees will not be used to fund any action beneficial to DUBLR token holders, and cannot be used to fund ongoing maintenance or improvement of the Dublr smart contract code, since no changes can be made to the deployed Dublr contract code after deployment.</p>
 
                 <!-- TODO: check min amount is satisfied, and show min value in label for amount, every time price is updated -->
                 <!-- TODO: check amount is less than DUBLR balance -->
@@ -135,7 +187,7 @@
 
                 <div style="margin-top: 18pt; text-align: center;">
                     <input type="checkbox" id="terms_buy">
-                    <label for="terms_buy" class="checkable">I agree to the Dublr <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a>.</label>
+                    <label for="terms_buy" class="checkable">I agree to the full Dublr <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a>.</label>
                 </div>
 
                 <div style="margin: 12pt; text-align: center;">

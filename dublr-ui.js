@@ -35,11 +35,6 @@ function formatAddress(addr) {
     return `${match[1]}...${match[2]}`;
 }
 
-// Convert Wei to ETH
-function formatWei(amt) {
-    return ethers.utils.formatEther(amt);
-}
-
 function formatPrice(price_x1e9) {
     return (price_x1e9 * 1e-9).toFixed(9);
 }
@@ -98,21 +93,20 @@ async function orderBookSize(dublr, dublrStateTrigger) {
 }
 
 async function orderBook(dublr, orderBookSize, dublrStateTrigger) {
-    if (dublr && orderBookSize) {
-        let orderBookEntries = [];
-        if (orderBookSize > 0) {
-            try {
-                orderBookEntries = await dublr.callStatic.allSellOrders();
-                // TODO: check sorting works in increasing order of price
-                orderBookEntries.sort((a, b) => a.priceETHPerDUBLR_x1e9.lt(b.priceETHPerDUBLR_x1e9) ? -1 : 1);
-            } catch (e) {
-                // TODO: Rinkeby Dublr contract reverts when the last orderbook entry is removed -- ignore
-            }
-        }
-        return orderBookEntries;
-    } else {
+    if (!dublr || orderBookSize === undefined) {
         return undefined;
     }
+    let orderBookEntries = [];
+    if (orderBookSize > 0) {
+        try {
+            orderBookEntries = await dublr.callStatic.allSellOrders();
+            // TODO: check sorting works in increasing order of price
+            orderBookEntries.sort((a, b) => a.priceETHPerDUBLR_x1e9.lt(b.priceETHPerDUBLR_x1e9) ? -1 : 1);
+        } catch (e) {
+            // TODO: Rinkeby Dublr contract reverts when the last orderbook entry is removed -- ignore
+        }
+    }
+    return orderBookEntries;
 }
 
 async function mySellOrder(dublr, dublrStateTrigger) {
@@ -133,12 +127,57 @@ async function minSellOrderValueETHWEI(dublr, dublrStateTrigger) {
     return dublr ? await dublr.callStatic.minSellOrderValueETHWEI() : undefined;
 }
 
+async function gasPrice(provider) {
+    return await provider.getGasPrice();
+}
+
+async function gasEst(dublr, buyAmount, allowBuying, allowMinting, gasPrice, ethBalance) {
+    if (dublr === undefined || buyAmount === undefined || allowBuying === undefined || allowMinting === undefined
+            || gasPrice === undefined || ethBalance === undefined) {
+        return undefined;
+    }
+    let buyAmtEthWei;
+    try {
+        buyAmtEthWei = ethers.utils.parseEther(buyAmount);
+    } catch (e) {
+        return "\"Amount to spend\" is not a number";
+    }
+    if (buyAmtEthWei.gt(ethBalance)) {
+        return "Reduce \"Amount to spend\" below wallet ETH balance"
+    }
+    try {
+        const gasAmt = await dublr.estimateGas.buy(
+                // Set minimumTokensToBuyOrMintDUBLRWEI to 0 to prevent transaction reverting due to slippage
+                0, allowBuying, allowMinting,
+                // Simulate sending the specified amount of ETH, with max gas limit
+                {value: buyAmtEthWei, gasLimit: 3e7});
+        return gasAmt.mul(gasPrice);
+    } catch (e) {
+        const reason = e.reason ? e.reason : e.error && e.error.message ? e.error.message : "unknown reason";
+        if (reason.startsWith("insufficient funds")) {
+            return "Insufficient ETH balance for amount plus gas";
+        } else if (reason.contains("out of gas")) {
+            return "Hit max gas limit, try buying a smaller amount";
+        } else if (reason.startsWith("execution reverted")) {
+            return reason;
+        }
+        return "Could not estimate gas: " + reason;
+    }
+}
+
+let gasManuallyModified = false;
+
+async function gasProvidedModified(gasProvided) {
+    // After gas is manually modified, don't update it based on the gas estimate
+    gasManuallyModified = true;
+}
+
 async function updateWalletUI(wallet, ethBalance, dublrBalance) {
     const walletInfoSpan = document.getElementById("wallet-info");
     walletInfoSpan.innerHTML = "<tt>Wallet <b>" 
             + (wallet ? formatAddress(wallet) : "(not connected)") + "</b> balances:<br/>"
-            + "<b>" + (ethBalance ? formatWei(ethBalance) : "(unknown)") + "</b> ETH<br/>"
-            + "<b>" + (dublrBalance ? formatWei(dublrBalance) : "(unknown)") + "</b> DUBLR</tt>";
+            + "<b>" + (ethBalance ? ethers.utils.formatEther(ethBalance) : "(unknown)") + "</b> ETH<br/>"
+            + "<b>" + (dublrBalance ? ethers.utils.formatEther(dublrBalance) : "(unknown)") + "</b> DUBLR</tt>";
 }
 
 async function updateMintPriceUI(mintPrice) {
@@ -154,9 +193,9 @@ async function updateOrderBookUI(orderBook) {
             const amtETH = dublrToETH(order.priceETHPerDUBLR_x1e9, order.amountDUBLRWEI);
             cumulAmtETH = cumulAmtETH.add(amtETH);
             tbody += "<trow><td align=\"right\"><tt>" + formatPrice(order.priceETHPerDUBLR_x1e9)
-                    + "</tt></td><td align=\"right\"><tt>" + formatWei(order.amountDUBLRWEI)
-                    + "</tt></td><td align=\"right\"><tt>" + formatWei(amtETH)
-                    + "</tt></td><td align=\"right\"><tt>" + formatWei(cumulAmtETH)
+                    + "</tt></td><td align=\"right\"><tt>" + ethers.utils.formatEther(order.amountDUBLRWEI)
+                    + "</tt></td><td align=\"right\"><tt>" + ethers.utils.formatEther(amtETH)
+                    + "</tt></td><td align=\"right\"><tt>" + ethers.utils.formatEther(cumulAmtETH)
                     + "</tt></td></trow>";
         }
     }
@@ -164,16 +203,63 @@ async function updateOrderBookUI(orderBook) {
     orderbookTbody.innerHTML = tbody;
 }
 
+async function updateBuyUI(gasEst) {
+    document.getElementById("gas-est").value =
+        gasEst === undefined ? "(unknown)" : gasEst instanceof ethers.BigNumber ? ethers.utils.formatEther(gasEst) : gasEst;
+    if (!gasManuallyModified) {
+        // Add 20% to the gas to provide, on top of the estimate
+        document.getElementById("gasProvided").value =
+            gasEst instanceof ethers.BigNumber ? ethers.utils.formatEther(gasEst.mul(6).div(5)) : "";
+    }
+}
+
+let oldAllowBuying = true;
+let oldAllowMinting = true;
+dataflow.set({ allowBuying: true, allowMinting: true });
+
+// Force at least one of the buy or mint checkboxes to be checked
+async function constrainBuyMintCheckboxes(allowBuying, allowMinting) {
+    if (allowBuying === false && allowMinting === false) {
+        if (oldAllowBuying) {
+            document.getElementById("allowMinting").checked = true;
+            dataflow.set({ allowMinting: true });
+        } else {
+            document.getElementById("allowBuying").checked = true;
+            dataflow.set({ allowBuying: true });
+        }
+    }
+    oldAllowBuying = allowBuying;
+    oldAllowMinting = allowMinting;
+}
+
 dataflow.register(
     provider, dublr, ethBalance, dublrBalance, mintPrice,
     orderBookSize, orderBook,
     mySellOrder, minSellOrderValueETHWEI,
+    gasPrice, gasEst, gasProvidedModified,
     updateWalletUI, updateMintPriceUI, updateOrderBookUI,
+    updateBuyUI, constrainBuyMintCheckboxes,
 );
 
-// MetaMask Onboarding flow (modified from docs) -----------------------------------
 
 window.addEventListener("DOMContentLoaded", async () => {
+    
+    // TODO: why does hitting Enter on the page result in the page being refreshed?
+    
+    // UI setup ------------------------------------------------------------------------
+    
+    DEBUG_DATAFLOW = true;
+    
+    // Register all reactive elements to set the corresponding input in the dataflow graph based on id
+    [...document.getElementsByClassName("reactive-input")].forEach(elt => {
+        elt.addEventListener("change", () => {
+            const value = elt.type === "checkbox" || elt.type === "radio" ? elt.checked : elt.value;
+            dataflow.set({ [elt.id]: value });
+        });
+    });
+
+    // MetaMask Onboarding flow (modified from docs) -----------------------------------
+    
     const onboarding = new MetaMaskOnboarding();
     const onboardButton = document.getElementById("onboard");
     const onboardText = document.getElementById("onboard-text");
