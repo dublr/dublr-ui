@@ -1,4 +1,29 @@
 
+// Dublr contract -------------------------------------------------
+
+const dublrAddr = "0x795fc0A43A8C1Db020CB243d76383a50BAA8CD24";    // TODO: This is the Rinkeby test address
+
+const dublrABI = [
+        "event ListSell(address indexed seller, uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
+        "event CancelSell(address indexed seller, uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
+        "event Buy(address indexed buyer, address indexed seller, uint256 priceETHPerDUBLR_x1e9, uint256 amountBoughtDUBLRWEI,"
+            + " uint256 amountRemainingInOrderDUBLRWEI, uint256 amountSentToSellerETHWEI, uint256 amountChargedToBuyerETHWEI)",
+        "event Mint(address indexed buyer, uint256 priceETHPerDUBLR_x1e9, uint256 amountSpentETHWEI, uint256 amountMintedDUBLRWEI)",
+        "event OutOfGasForBuyingSellOrders(address indexed buyer, uint256 buyOrderRemainingETHWEI, uint256 totBoughtDUBLRWEI)",
+        "event RefundChange(address indexed buyer, uint256 refundedETHWEI)",
+        "event Unpayable(address indexed seller, uint256 amountETHWEI, bytes data)",
+        "function orderBookSize() view returns (uint256 numEntries)",
+        "function cheapestSellOrder() view returns (uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
+        "function mySellOrder() view returns (uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
+        "function cancelMySellOrder()",
+        "function allSellOrders() view returns ((uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)[] memory priceAndAmountOfSellOrders)",
+        "function sell(uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
+        "function buy(uint256 minimumTokensToBuyOrMintDUBLRWEI, bool allowBuying, bool allowMinting) payable",
+        "function minSellOrderValueETHWEI() returns (uint256)",
+        "function mintPrice() external view returns (uint256 mintPriceETHPerDUBLR_x1e9)",
+        "function balanceOf(address addr) returns (uint256)",
+];
+
 // Formatting functions -------------------------------------------
 
 const ADDR_REGEXP = /^(0x[a-zA-Z0-9]{3})[a-zA-Z0-9]+([a-zA-Z0-9]{4})$/;
@@ -29,18 +54,20 @@ function ethToDUBLR(price_x1e9, amtETH) {
 
 // Dataflow functions ----------------------------------------------
 
-const dublrAddr = "0x795fc0A43A8C1Db020CB243d76383a50BAA8CD24";    // TODO: This is the Rinkeby test address
-
 async function provider(ethInstance) {
+    if (!ethInstance) {
+        return undefined;
+    }
+    
     // Connect Ethers to MetaMask
     const metaMaskProvider = new ethers.providers.Web3Provider(ethInstance);
 
-    // Listen to all DUBLR events, and set dublrStateChanged to the block number of any events that are emitted.
+    // Listen to all DUBLR events, and set dublrStateTrigger to the block number of any events that are emitted.
     // (This will cause only one dataflow change even if there are many events emitted in a single block.)
     metaMaskProvider.on({ address: dublrAddr }, (log, event) => {
         // Ignore log entries without block numbers (this includes RPC errors, such as reverted transactions)
         if (log?.blockNumber) {
-            dataflow.set({ dublrStateChanged: log.blockNumber });
+            dataflow.set({ dublrStateTrigger: log.blockNumber });
         }
     });
     
@@ -48,49 +75,29 @@ async function provider(ethInstance) {
 }
 
 async function dublr(provider) {
-    let abi = [
-            "event ListSell(address indexed seller, uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
-            "event CancelSell(address indexed seller, uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
-            "event Buy(address indexed buyer, address indexed seller, uint256 priceETHPerDUBLR_x1e9, uint256 amountBoughtDUBLRWEI,"
-                + " uint256 amountRemainingInOrderDUBLRWEI, uint256 amountSentToSellerETHWEI, uint256 amountChargedToBuyerETHWEI)",
-            "event Mint(address indexed buyer, uint256 priceETHPerDUBLR_x1e9, uint256 amountSpentETHWEI, uint256 amountMintedDUBLRWEI)",
-            "event OutOfGasForBuyingSellOrders(address indexed buyer, uint256 buyOrderRemainingETHWEI, uint256 totBoughtDUBLRWEI)",
-            "event RefundChange(address indexed buyer, uint256 refundedETHWEI)",
-            "event Unpayable(address indexed seller, uint256 amountETHWEI, bytes data)",
-            "function orderBookSize() view returns (uint256 numEntries)",
-            "function cheapestSellOrder() view returns (uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
-            "function mySellOrder() view returns (uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
-            "function cancelMySellOrder()",
-            "function allSellOrders() view returns ((uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)[] memory priceAndAmountOfSellOrders)",
-            "function sell(uint256 priceETHPerDUBLR_x1e9, uint256 amountDUBLRWEI)",
-            "function buy(uint256 minimumTokensToBuyOrMintDUBLRWEI, bool allowBuying, bool allowMinting) payable",
-            "function minSellOrderValueETHWEI() returns (uint256)",
-            "function mintPrice() external view returns (uint256 mintPriceETHPerDUBLR_x1e9)",
-            "function balanceOf(address addr) returns (uint256)",
-    ];
-    return new ethers.Contract(dublrAddr, abi, provider).connect(provider.getSigner());
+    return provider ? new ethers.Contract(dublrAddr, dublrABI, provider).connect(provider.getSigner()) : undefined;
 }
 
-async function ethBalance(provider, wallet, dublrStateChanged) {
+async function ethBalance(provider, wallet, dublrStateTrigger) {
     return provider && wallet ? await provider.getBalance(wallet) : undefined;
 }
 
-async function dublrBalance(dublr, wallet, dublrStateChanged) {
+async function dublrBalance(dublr, wallet, dublrStateTrigger) {
     return dublr && wallet ? await dublr.callStatic.balanceOf(wallet) : undefined;
 }
 
 // Update mint price every 60 seconds
-setInterval(() => dataflow.set({ mintPriceTimer: Date.now() }), 60 * 1000);
+setInterval(() => dataflow.set({ mintPriceTimerTrigger: Date.now() }), 60 * 1000);
 
-async function mintPrice(dublr, mintPriceTimer) {
+async function mintPrice(dublr, mintPriceTimerTrigger) {
     return dublr ? await dublr.callStatic.mintPrice() : undefined;
 }
 
-async function orderBookSize(dublr, dublrStateChanged) {
+async function orderBookSize(dublr, dublrStateTrigger) {
     return dublr ? ethers.BigNumber.from(await dublr.callStatic.orderBookSize()).toNumber() : undefined;
 }
 
-async function orderBook(dublr, orderBookSize, dublrStateChanged) {
+async function orderBook(dublr, orderBookSize, dublrStateTrigger) {
     if (dublr && orderBookSize) {
         let orderBookEntries = [];
         if (orderBookSize > 0) {
@@ -108,7 +115,7 @@ async function orderBook(dublr, orderBookSize, dublrStateChanged) {
     }
 }
 
-async function mySellOrder(dublr, dublrStateChanged) {
+async function mySellOrder(dublr, dublrStateTrigger) {
     if (dublr) {
         try {
             const order = await dublr.callStatic.mySellOrder();
@@ -122,7 +129,7 @@ async function mySellOrder(dublr, dublrStateChanged) {
     return undefined;
 }
 
-async function minSellOrderValueETHWEI(dublr, dublrStateChanged) {
+async function minSellOrderValueETHWEI(dublr, dublrStateTrigger) {
     return dublr ? await dublr.callStatic.minSellOrderValueETHWEI() : undefined;
 }
 
