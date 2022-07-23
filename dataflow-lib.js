@@ -31,7 +31,6 @@ function newQueue() {
 }
 
 const dataflow = {
-    allParamNames: new Set(),          // set of names
     nameToFn: new Map(),               // name -> function
     nodeToUpstreamNodes: new Map(),    // name -> list of names
     nodeToDownstreamNodes: new Map(),  // name -> list of names
@@ -50,9 +49,6 @@ const dataflow = {
 
             // Extract param names from function (these are the upstream dep names)
             const paramNames = getParamNames(fn);
-            for (const paramName of paramNames) {
-                dataflow.allParamNames.add(paramName);
-            }
             
             // Create DAG
             dataflow.nodeToUpstreamNodes.set(fn.name, paramNames);
@@ -160,13 +156,13 @@ const dataflow = {
                         const fn = dataflow.nameToFn.get(name);
                         // Get cached upstream node values for each parameter of fn
                         const params = [];
-                        for (const paramName of dataflow.nodeToUpstreamNodes.get(fn.name)) {
+                        for (const paramName of dataflow.nodeToUpstreamNodes.get(name)) {
                             const paramVal = dataflow.value[paramName];
                             params.push(paramVal);
                         }
                         // Call fn with these params, returning the resulting promise
                         if (DEBUG_DATAFLOW) {
-                            console.log("Calling: " + fn.name + "(" + params + ")");
+                            console.log("Calling: " + name + "(" + params + ")");
                         }
                         return fn(...params);
                     });
