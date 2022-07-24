@@ -89,8 +89,9 @@ async function provider(chainId) {
     return metaMaskProvider;
 }
 
-async function dublr(provider) {
-    if (!provider) {
+async function dublr(provider, wallet) {
+    if (!provider || !wallet) {
+        dataflow.set({networkError: ""});
         return undefined;
     }
     const contract = new ethers.Contract(dublrAddr, dublrABI, provider);
@@ -123,7 +124,7 @@ async function mintingEnabled(dublr) {
 }
 
 async function ethBalance(provider, wallet, dublrStateTrigger) {
-    return !provider ? undefined : await safe(provider.getBalance(wallet));
+    return !provider || !wallet ? undefined : await safe(provider.getBalance(wallet));
 }
 
 async function dublrBalance(dublr, wallet, dublrStateTrigger) {
@@ -140,6 +141,7 @@ async function mintPriceETHPerDUBLR_x1e9(dublr, mintPriceTimerTrigger) {
     } else {
         const mintPrice_x1e9 = await safe(dublr.callStatic.mintPrice());
         if (mintPrice_x1e9 === undefined) {
+            dataflow.set({mintPrice: "unknown"});
             return undefined;
         }
         dataflow.set({mintPrice: formatPrice(mintPrice_x1e9) + " ETH per DUBLR"});  // Pushed to UI
@@ -157,6 +159,7 @@ async function orderBookSize(dublr, dublrStateTrigger) {
 
 async function orderBook(dublr, orderBookSize, dublrStateTrigger) {
     if (!dublr || orderBookSize === undefined) {
+        dataflow.set({orderbookRows: ""});
         return undefined;
     }
     
@@ -165,6 +168,7 @@ async function orderBook(dublr, orderBookSize, dublrStateTrigger) {
     if (orderBookSize > 0) {
         orderBookEntries = await safe(dublr.callStatic.allSellOrders());
         if (orderBookEntries === undefined) {
+            dataflow.set({orderbookRows: ""});
             return undefined;
         }
         // TODO: check sorting works in increasing order of price
@@ -257,6 +261,7 @@ async function buyAmountETHWEI(buyAmountUI, ethBalance) {
 
 async function maxGasToProvideETHWEI(maxGasToProvideUI, gasEstETHWEI) {
     if (maxGasToProvideUI === undefined) {
+        dataflow.set({maxGasToProvideWarning: ""});
         return undefined;
     }
     let warningText = "";
@@ -283,6 +288,7 @@ async function maxGasToProvideETHWEI(maxGasToProvideUI, gasEstETHWEI) {
 
 async function minimumTokensToBuyOrMintDUBLRWEI(amountBoughtEstDUBLRWEI, maxSlippageUI) {
     if (maxSlippageUI === undefined) {
+        dataflow.set({minDublr: undefined, slippageLimitWarning: ""});    
         return undefined;
     }
     let warningText = "";
@@ -297,8 +303,7 @@ async function minimumTokensToBuyOrMintDUBLRWEI(amountBoughtEstDUBLRWEI, maxSlip
         minAmountETHWEI = amountBoughtEstDUBLRWEI.mul(Math.floor(slippageFrac)).div(1e6);
     }
     const minDublr = minAmountETHWEI === undefined ? "" : ethers.utils.formatEther(minAmountETHWEI);
-    dataflow.set({minDublr: minDublr, slippageLimitWarning: warningText});
-    
+    dataflow.set({minDublr: minDublr, slippageLimitWarning: warningText});    
     return minAmountETHWEI;
 }
 
@@ -308,13 +313,11 @@ async function gasEstETHWEI(provider, dublr, buyAmountETHWEI, allowBuying, allow
         gasPriceETHWEI, ethBalance) {
     if (!provider || !dublr || !buyAmountETHWEI || allowBuying === undefined || allowMinting === undefined
             || !gasPriceETHWEI || !ethBalance) {
+        dataflow.set({gasEstUI: undefined, maxGasToProvideUI: undefined, gasEstWarning: ""});
         return undefined;
     }
     const blockNumber = await safe(provider.getBlockNumber());
-    if (!blockNumber) {
-        return undefined;
-    }
-    const block = await safe(provider.getBlock(blockNumber));
+    const block = !blockNumber ? undefined : await safe(provider.getBlock(blockNumber));
     if (!block) {
         return undefined;
     }
@@ -360,13 +363,15 @@ async function amountBoughtEstDUBLRWEI(ethBalance, buyAmountETHWEI, allowBuying,
     if (ethBalance === undefined || buyAmountETHWEI === undefined
             || allowBuying === undefined || allowMinting === undefined
             || orderBook === undefined || mintPriceETHPerDUBLR_x1e9 === undefined) {
+        dataflow.set({expectedDublr: undefined, executionPlanLines: ""});
+        return undefined;
+    }
+    if (!buyAmountETHWEI.lt(ethBalance)) {
+        dataflow.set({expectedDublr: undefined,
+                executionPlanLines: "\"Amount to spend\" must be less than wallet ETH balance"});
         return undefined;
     }
     let result = [];
-    if (!buyAmountETHWEI.lt(ethBalance)) {
-        result.push("\"Amount to spend\" must be less than wallet ETH balance");
-        return undefined;
-    }
     if (orderBook.length == 0) {
         result.push("Orderbook is empty");
     }
@@ -467,7 +472,6 @@ async function amountBoughtEstDUBLRWEI(ethBalance, buyAmountETHWEI, allowBuying,
     }
     dataflow.set({expectedDublr: ethers.utils.formatEther(totBoughtOrMintedDUBLRWEI),
             executionPlanLines: executionPlanLines});
-    
     return totBoughtOrMintedDUBLRWEI;
 }
 
@@ -503,7 +507,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     
     // Register dataflow functions -------------------------------------------
     
-    // DEBUG_DATAFLOW = true;
+    DEBUG_DATAFLOW = true;
 
     dataflow.register(
         constrainBuyMintCheckboxes, buyAmountETHWEI, maxGasToProvideETHWEI,
@@ -558,6 +562,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const onboardButton = document.getElementById("onboard");
     const onboardText = document.getElementById("onboard-text");
     let notOriginallyConnected = false;
+    let listenersAdded = false;
     let accounts;
     const updateButton = async () => {
         if (!MetaMaskOnboarding.isMetaMaskInstalled()) {
@@ -569,15 +574,17 @@ window.addEventListener("DOMContentLoaded", async () => {
                 onboarding.startOnboarding();
             };
         } else {
-            window.ethereum.on("accountsChanged", async (accounts) => {
-                await updateButton();
-            });
-            window.ethereum.on("chainChanged", (chainId) => {
-                dataflow.set({chainId: chainId});
-            });
-            window.ethereum.on("disconnect", (error) => {
-                console.log(error);
-            });
+            if (!listenersAdded) {
+                window.ethereum.on("accountsChanged", async (accounts) => {
+                    await updateButton();
+                });
+                window.ethereum.on("chainChanged", (chainId) => {
+                    dataflow.set({chainId: chainId});
+                });
+                window.ethereum.on("disconnect", (error) => {
+                    console.log(error);
+                });
+            }
             // Test if connected without actually requesting accounts
             accounts = await window.ethereum.request({method: "eth_accounts"});
             // Use first account as the wallet

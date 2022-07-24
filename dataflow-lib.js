@@ -110,10 +110,6 @@ const dataflow = {
                     console.log("Setting: " + name + " = " + value);
                 }
                 dataflow.value[name] = value;
-            } else {
-                if (DEBUG_DATAFLOW) {
-                    console.log("Unchanged: " + name + " = " + value);
-                }
             }
             // Mark direct downstream nodes as dirty
             const dsFnNames = dataflow.nodeToDownstreamNodes.get(name);
