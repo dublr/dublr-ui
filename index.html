@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8">
         <title>Dublr Token</title>
-        <link rel="shortcut icon" href="https://raw.githubusercontent.com/dublr/dublr/main/icon.png" />
+        <link rel="shortcut icon" href="https://raw.githubusercontent.com/dublr/dublr/main/icon.svg" />
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/picnic@7.1.0/picnic.min.css" />
         <link rel="stylesheet" href="tabs.css" />
@@ -11,6 +11,7 @@
             h1 { font-weight: normal; }
             tt { font-size: 12pt; }
             :disabled { background-color: WhiteSmoke; }
+            .warning-text { color: red; font-size: 11pt; }
         </style>
         <script type="application/javascript" src="metamask-onboarding.bundle.js"></script>
         <script type="application/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.6.9/ethers.umd.min.js"></script>
@@ -23,7 +24,10 @@
         <div style="text-align: center;">
             <button id="onboard"><span><img width="28pt" height="28pt" style="vertical-align: middle; margin-top:-3pt;" src="metamask-icon.svg"/>&nbsp;<span id="onboard-text">Connect</span></span></button>
             <br/>
-            <span id="wallet-info"></span>
+            <tt>
+                <div from-dataflow="networkError" id="networkError" class="warning-text"></div>
+                <div from-dataflow="walletInfo" id="walletInfo"></div>
+            </tt>
         </div>
 
         <div class="tab-wrap">
@@ -61,16 +65,17 @@
                             <th style="text-align: right;">Cumul Amount<br/>(ETH)</th>
                         </tr>
                     </thead>
-                    <tbody id="orderbook-tbody">
+                    <tbody from-dataflow="orderbookRows" id="orderbookRows">
                     </tbody>
                 </table>
 
                 <div style="text-align: center; margin: 12pt;" id="orderbook-empty"></div>
 
-                <div style="text-align: center; margin: 12pt;"><b>Mint price (ETH per DUBLR):</b> <tt><span id="mint-price"></span></tt></div>
+                <div style="text-align: center; margin: 12pt;"><b>Mint price:</b> <tt><span from-dataflow="mintPrice" id="mintPrice"></span></tt></div>
             </div>
             
             <div class="tab__content">
+                <p style="text-align: center;"><b>(For buy UI, see below)</b></p>
                 <p><b>Buying DUBLR tokens</b> exchanges ETH for DUBLR tokens in your MetaMask wallet. Tokens are bought from sell orders listed on the built-in decentralized exchange (DEX), in increasing order of price, until the current mint price is reached. New tokens are then minted at the current mint price using any remaining ETH balance.</p>
                 <p><b>Slippage protection:</b> The maximum amount of acceptable slippage is specified as a percentage, to prevent sudden unexpected increase in price due to somebody else buying the sell orders you intended to buy right before your transaction is run.</p>
                 <p><b>Gas requirement:</b> Calling the buy function may result in multiple sell orders being purchased from the DEX, and each purchase of a sell order consumes gas. Sufficient gas must be supplied to buy the requested sell orders. If a buy request can't be filled without gas exhaustion, the Dublr contract will try to buy as many tokens as possible and then refund the unspent ETH balance. Therefore, you may need to call the buy function multiple times to purchase the desired number of tokens.
@@ -81,14 +86,16 @@
                 <form>
                     <div style="margin-top: 12pt;">
                         <label>
-                            <input class="reactive-input" type="checkbox" id="allowBuying" checked="true">
+                            <input class="to-dataflow-on-change" type="checkbox" id="allowBuyingUI" checked="true"
+                                    from-dataflow="allowBuying">
                             <span class="checkable">
                                 Allow buying of sell orders
                             </span>
                         </label>
                         <br/>
                         <label>
-                            <input class="reactive-input" type="checkbox" id="allowMinting" checked="true">
+                            <input class="to-dataflow-on-change" type="checkbox" id="allowMintingUI" checked="true"
+                                    from-dataflow="allowMinting">
                             <span class="checkable">
                                 Allow minting of new tokens
                             </span>
@@ -101,9 +108,20 @@
                         </header>
                         <footer>
                             <div>
-                                <label for="buyAmount">Amount to spend on DUBLR tokens (ETH) -- decimal numbers OK</label>
-                                <input class="reactive-input" id="buyAmount" type="text">
+                                <label for="buyAmountUI">Amount to spend on DUBLR tokens (ETH) -- decimals OK</label>
+                                <input class="to-dataflow-on-input" id="buyAmountUI" type="text" value="1.0">
                             </div>
+                            <span class="warning-text" from-dataflow="buyAmountWarning" id="buyAmountWarning"></span>
+                        </footer>
+                    </article>
+
+                    <article class="card" style="margin-top: 12pt;">
+                        <header>
+                            Execution plan (based on amount and current orderbook)
+                        </header>
+                        <footer style="background-color: WhiteSmoke;">
+                            <tt><span from-dataflow="executionPlanLines" id="executionPlan">
+                            </span></tt>
                         </footer>
                     </article>
 
@@ -113,13 +131,16 @@
                         </header>
                         <footer>
                             <div>
-                                <label for="gas-est">Gas estimate (ETH)</label>
-                                <input id="gas-est" type="text" value="(unknown)" disabled>
+                                <label for="gasEstUI">Gas estimate (ETH)</label>
+                                <input from-dataflow="gasEstUI" id="gasEstUI" type="text" value="(unknown)" disabled>
                             </div>
+                            <span class="warning-text" from-dataflow="gasEstWarning" id="gasEstWarning"></span>
+                            
                             <div style="margin-top: 12pt;">
-                                <label for="gasProvided">Max gas to provide (ETH)</label>
-                                <input class="reactive-input" id="gasProvided" type="text">
+                                <label for="maxGasToProvideUI">Max gas to provide (ETH)</label>
+                                <input from-dataflow="maxGasToProvideUI" class="to-dataflow-on-input" id="maxGasToProvideUI" type="text">
                             </div>
+                            <span class="warning-text" from-dataflow="maxGasToProvideWarning" id="maxGasToProvideWarning"></span>
                         </footer>
                     </article>
 
@@ -129,37 +150,32 @@
                         </header>
                         <footer>
                             <div>
-                                <label for="min-dublr">Amount of DUBLR that ETH amount is expected to buy (DUBLR)</label>
-                                <input id="min-dublr" type="text" disabled>
+                                <label for="expectedDublr">Expected purchase amount (DUBLR)</label>
+                                <input from-dataflow="expectedDublr" id="expectedDublr" type="text" disabled>
                             </div>
 
                             <div style="margin-top: 12pt;">
-                                <label for="slippage-limit-percent">Max allowable slippage (%)</label>
-                                <input id="slippage-limit-percent" type="text" value="1">
+                                <label for="maxSlippageUI">Max allowable slippage (%)</label>
+                                <input class="to-dataflow-on-input" id="maxSlippageUI" type="text" value="1">
                             </div>
+                            <span class="warning-text" from-dataflow="slippageLimitWarning" id="slippageLimitWarning"></span>
 
                             <div style="margin-top: 12pt;">
-                                <label for="min-dublr">Min DUBLR tokens that must be bought to prevent slippage (DUBLR)</label>
-                                <input id="min-dublr" type="text" disabled>
+                                <label for="minDublr">Min purchase amount to prevent slippage (DUBLR)</label>
+                                <input from-dataflow="minDublr" id="minDublr" type="text" disabled>
                             </div>
-                        </footer>
-                    </article>
-
-                    <article class="card" style="margin-top: 12pt;">
-                        <header>
-                            Execution plan
-                        </header>
-                        <footer id="execution-plan">
                         </footer>
                     </article>
 
                     <div style="margin-top: 18pt; text-align: center;">
-                        <input type="checkbox" id="terms_buy">
-                        <label for="terms_buy" class="checkable">I agree to the full Dublr <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a>.</label>
+                        <input type="checkbox" class="to-dataflow-on-change" id="termsBuy">
+                        <label for="termsBuy" class="checkable">I agree to the full Dublr <a href="https://github.com/dublr/dublr/blob/main/LEGAL.md">Legal Agreement and Disclaimers</a>.</label>
                     </div>
 
                     <div style="margin: 12pt; text-align: center;">
-                        <button>Buy DUBLR tokens</button>
+                        <button id="buyButton" disabled>Buy DUBLR tokens</button>
+                        <br/>
+                        <span class="warning-text" from-dataflow="buyError" id="buyError"></span>
                     </div>
                 </form>
                 
@@ -170,6 +186,7 @@
             </div>
 
             <div class="tab__content">
+                <p style="text-align: center;"><b>(For sell UI, see below)</b></p>
                 <p><b>Selling DUBLR tokens</b> lists some of your DUBLR tokens for sale at a specified price, creating a sell order in the orderbook. These tokens remain listed until canceled or bought by a buyer. If bought, the ETH value of the purchased tokens are transferred from the buyer to the seller (minus a small fee, see below).</p>
                 <p><b>Tokens deducted from balance while listed:</b> During the time that tokens are listed for sale, the amount of the sell order is deducted from the DUBLR balance of the seller, to prevent double-spending. If the sell order is later canceled before all listed tokens are bought, the unbought tokens are returned to the seller's token balance.</p>
                 <p><b>One order per seller at one time:</b> If there is already a sell order in the order book for your wallet, then that old order is automatically canceled before the new order is placed (there may only be one order per seller wallet in the orderbook at one time).</p>
