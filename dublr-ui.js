@@ -155,7 +155,7 @@ function makeSubTable(keys, values) {
 // Based on https://stackoverflow.com/a/21742107/3950982
 function isMobile() {
     var userAgent = navigator.userAgent || navigator.vendor || window.opera;
-    window.alert(userAgent);
+    window.alert(userAgent); // TODO
     return /windows phone/i.test(userAgent)
         || /android/i.test(userAgent)
         || (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream);
@@ -839,7 +839,7 @@ window.addEventListener("DOMContentLoaded", async () => {
                 };
             } else {
                 // Desktop onboarding
-                onboardText.innerText = "Click here to install MetaMask";
+                onboardText.innerText = "Tap here to install MetaMask";
                 onboardButton.onclick = () => {
                     onboardText.innerText = "Waiting for MetaMask to be installed";
                     onboardButton.disabled = true;
