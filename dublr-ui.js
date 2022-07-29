@@ -66,7 +66,14 @@ function formatDollars(amt) {
 }
 
 // Format to 12 significant figures, but keep all figures before the decimal.
-// Truncates (rounds down) at the last digit.
+// (It doesn't follow the strict definition of significant figures, because
+// if the number has more than 12 digits to the left of the decimal point,
+// the least-significant digits of the integer part won't be set to zero,
+// and if the number is positive but less than 1.0, every zero counts as a
+// "significant figure", meaning it switches to displaying 11 decimal points
+// regardless of whether they are zeroes or not.
+// Also truncates (rounds down) at the last digit.
+// In other words this is a pretty lazy (utilitarian) number formatter.
 function formatSF(num) {
     const targetSF = 12;
     let numSF = 0;
@@ -143,6 +150,14 @@ function makeSubTable(keys, values) {
     html += "</tbody>";
     html += "</table>";
     return html;
+}
+
+// Based on https://stackoverflow.com/a/21742107/3950982
+function isMobile() {
+    var userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    return /windows phone/i.test(userAgent)
+        || /android/i.test(userAgent)
+        || (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream));
 }
 
 // Dataflow inputs from Dublr contract ----------------------------------------------
@@ -536,7 +551,7 @@ async function amountBoughtEstDUBLRWEI(balanceETHWEI, buyAmountETHWEI, allowBuyi
         });
         return undefined;
     }
-    let result = "<b>Simulating buy function with current orderbook:</b><br/>"
+    let result = "<b>Simulating buy function using current orderbook:</b><br/>"
     result += "<ul style='margin-top: 8px; margin-bottom: 8px;'>";
     if (orderBook.length == 0) {
         result += "<li>Orderbook is empty</li>";
@@ -621,7 +636,8 @@ async function amountBoughtEstDUBLRWEI(balanceETHWEI, buyAmountETHWEI, allowBuyi
             buyOrderRemainingETHWEI = buyOrderRemainingETHWEI.sub(amountToMintETHWEI);
             totSpentETHWEI = totSpentETHWEI.add(amountToMintETHWEI);
             if (!skippedBuying) {
-                result += "<li>Ran out of sell orders after buying " + numBought + " orders; switched to minting</li>";
+                result += "<li>Ran out of sell orders after buying " + numBought + " order"
+                    + (numBought === 1 ? "" : "s") + "; switched to minting</li>";
             }
             tableRows += "<tr><td>"
                 + makeSubTable(["Mint:", "at price:", "for cost:"],
@@ -651,22 +667,21 @@ async function amountBoughtEstDUBLRWEI(balanceETHWEI, buyAmountETHWEI, allowBuyi
     summaryLabels.push("Total to spend:");
     summaryValues.push(weiToDisplay(totalToSpendETHWEI, "ETH", priceUSDPerCurrency));
     if (buyOrderRemainingETHWEI > 0) {
-        summaryLabels.push("Change to refund:");
+        summaryLabels.push("Refunded change:");
         summaryValues.push(weiToDisplay(buyOrderRemainingETHWEI, "ETH", priceUSDPerCurrency));
-    }
-    if (gasEstETHWEI !== undefined) {
-        summaryLabels.push("Gas estimate:");
-        summaryValues.push(weiToDisplay(gasEstETHWEI, "ETH", priceUSDPerCurrency));
     }
     summaryLabels.push("Total to receive:");
     summaryValues.push(weiToDisplay(totBoughtOrMintedDUBLRWEI, "DUBLR", priceUSDPerCurrency));
     let minimumTokensToBuyOrMintDUBLRWEI = totBoughtOrMintedDUBLRWEI.mul(Math.floor(maxSlippageFrac)).div(1e6);
     summaryLabels.push("Min w/ slippage:");
     summaryValues.push(weiToDisplay(minimumTokensToBuyOrMintDUBLRWEI, "DUBLR", priceUSDPerCurrency));
+    if (gasEstETHWEI !== undefined) {
+        summaryLabels.push("Gas estimate:");
+        summaryValues.push(weiToDisplay(gasEstETHWEI, "ETH", priceUSDPerCurrency));
+    }
 
     result += makeSubTable(summaryLabels, summaryValues);
     
-    // Convert lines to HTML and push out to execution plan element in UI
     dataflow.set({
         executionPlan_out: result,
         minimumTokensToBuyOrMintDUBLRWEI: minimumTokensToBuyOrMintDUBLRWEI,
@@ -686,13 +701,17 @@ async function updateWalletUI(provider, wallet, balanceETHWEI, balanceDUBLRWEI, 
 }
 
 async function buyButtonParams(dublr, buyAmountETHWEI, minimumTokensToBuyOrMintDUBLRWEI,
-        amountBoughtEstDUBLRWEI, allowBuying, allowMinting, termsBuy_in) {
+        amountBoughtEstDUBLRWEI, allowBuying, allowMinting, gasEstWarning_out, termsBuy_in) {
     const disabled = !dublr
         // Double-check that the ETH amount is nonzero
         || !buyAmountETHWEI || buyAmountETHWEI.eq(0)
         // Require that the buy simulation was able to buy a nonzero amount of DUBLR
-        || !amountBoughtEstDUBLRWEI || amountBoughtEstDUBLRWEI.eq(0)
-        || !minimumTokensToBuyOrMintDUBLRWEI || allowBuying === undefined || allowMinting === undefined
+        || !amountBoughtEstDUBLRWEI || amountBoughtEstDUBLRWEI.eq(0) || !minimumTokensToBuyOrMintDUBLRWEI
+        // One of allowBuying or allowMinting must be checked
+        || allowBuying === undefined || allowMinting === undefined || (!allowBuying && !allowMinting)
+        // Don't allow buying if there's a gas estimation warning showing
+        || gasEstWarning_out
+        // Terms must be agreed to
         || !termsBuy_in;
     document.getElementById("buyButton").disabled = disabled;
     return disabled ? undefined : {
@@ -808,12 +827,24 @@ window.addEventListener("DOMContentLoaded", async () => {
     const updateButton = async () => {
         if (!MetaMaskOnboarding.isMetaMaskInstalled()) {
             notOriginallyInstalled = true;
-            onboardText.innerText = "Click here to install MetaMask";
-            onboardButton.onclick = () => {
-                onboardText.innerText = "Waiting for MetaMask to be installed";
-                onboardButton.disabled = true;
-                onboarding.startOnboarding();
-            };
+            if (isMobile()) {
+                // Mobile onboarding
+                onboardText.innerText = "Open in Metamask Browser";
+                onboardButton.onclick = () => {
+                    onboardText.innerText = "Opening in MetaMask browser";
+                    onboardButton.disabled = true;
+                    // URL generated by https://metamask.github.io/metamask-deeplinks
+                    window.location.href = "https://metamask.app.link/dapp/dublr.github.io/dublr-ui";
+                };
+            } else {
+                // Desktop onboarding
+                onboardText.innerText = "Click here to install MetaMask";
+                onboardButton.onclick = () => {
+                    onboardText.innerText = "Waiting for MetaMask to be installed";
+                    onboardButton.disabled = true;
+                    onboarding.startOnboarding();
+                };
+            }
         } else {
             if (!listenersAdded) {
                 // Add account change listeners only once
