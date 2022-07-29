@@ -155,6 +155,7 @@ function makeSubTable(keys, values) {
 // Based on https://stackoverflow.com/a/21742107/3950982
 function isMobile() {
     var userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    window.alert(userAgent);
     return /windows phone/i.test(userAgent)
         || /android/i.test(userAgent)
         || (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream));
