@@ -158,7 +158,7 @@ function isMobile() {
     window.alert(userAgent);
     return /windows phone/i.test(userAgent)
         || /android/i.test(userAgent)
-        || (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream));
+        || (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream);
 }
 
 // Dataflow inputs from Dublr contract ----------------------------------------------
