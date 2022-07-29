@@ -506,16 +506,33 @@ async function gasEstETHWEI(provider, dublr, gasFeeDataETHWEI, buyAmountETHWEI, 
     return gasEstETHWEI;
 }
 
+async function maxSlippageFrac(maxSlippage_in) {
+    let slippageWarningText = "";
+    let slippageFrac;
+    if (maxSlippage_in !== undefined) {
+        const maxSlippagePercent = Number(maxSlippage_in);
+        if (maxSlippage_in === "" || isNaN(maxSlippagePercent)) {
+            slippageWarningText = "Not a number";
+        } else if (maxSlippagePercent < 0 || maxSlippagePercent > 100) {
+            slippageWarningText = "Invalid percentage";
+        } else if (amountBoughtEstDUBLRWEI !== undefined) {
+            slippageFrac = 1e4 * (100 - maxSlippagePercent); // Percentage times 1e6 fixed point base
+        }
+    }
+    dataflow.set({ slippageLimitWarning_out: slippageWarningText });
+    return slippageFrac;
+}
+
 async function amountBoughtEstDUBLRWEI(balanceETHWEI, buyAmountETHWEI, allowBuying, allowMinting,
-        buyingEnabled, mintingEnabled, orderBook, mySellOrder, maxSlippage_in,
+        buyingEnabled, mintingEnabled, orderBook, mySellOrder, maxSlippageFrac,
         mintPriceETHPerDUBLR_x1e9, gasEstETHWEI, priceUSDPerCurrency) {
     if (balanceETHWEI === undefined || buyAmountETHWEI === undefined
             || allowBuying === undefined || allowMinting === undefined
-            || orderBook === undefined || mintPriceETHPerDUBLR_x1e9 === undefined) {
+            || orderBook === undefined || mintPriceETHPerDUBLR_x1e9 === undefined
+            || maxSlippageFrac === undefined) {
         dataflow.set({
             executionPlan_out: "",
             minimumTokensToBuyOrMintDUBLRWEI: undefined,
-            slippageLimitWarning_out: ""
         });
         return undefined;
     }
@@ -617,6 +634,8 @@ async function amountBoughtEstDUBLRWEI(balanceETHWEI, buyAmountETHWEI, allowBuyi
     }
     if (tableRows.length > 0) {
         result += "<li>Steps completed:</li>";
+    } else {
+        result += "<li><span class='warning-text-large'>Nothing can be bought</span></li>";
     }
     result += "</ul>";
     if (tableRows.length > 0) {
@@ -641,29 +660,16 @@ async function amountBoughtEstDUBLRWEI(balanceETHWEI, buyAmountETHWEI, allowBuyi
     }
     summaryLabels.push("Total to receive:");
     summaryValues.push(weiToDisplay(totBoughtOrMintedDUBLRWEI, "DUBLR", priceUSDPerCurrency));
-    let minimumTokensToBuyOrMintDUBLRWEI;
-    let slippageWarningText = "";
-    if (maxSlippage_in !== undefined) {
-        let warningText = "";
-        const maxSlippagePercent = Number(maxSlippage_in);
-        if (maxSlippage_in === "" || isNaN(maxSlippagePercent)) {
-            slippageWarningText = "Not a number";
-        } else if (maxSlippagePercent < 0 || maxSlippagePercent > 100) {
-            slippageWarningText = "Invalid percentage";
-        } else if (amountBoughtEstDUBLRWEI !== undefined) {
-            const slippageFrac = 1e4 * (100 - maxSlippagePercent); // Percentage times 1e6 fixed point base
-            minimumTokensToBuyOrMintDUBLRWEI = totBoughtOrMintedDUBLRWEI.mul(Math.floor(slippageFrac)).div(1e6);
-        }
-        summaryLabels.push("Min w/ slippage:");
-        summaryValues.push(weiToDisplay(minimumTokensToBuyOrMintDUBLRWEI, "DUBLR", priceUSDPerCurrency));
-    }
+    let minimumTokensToBuyOrMintDUBLRWEI = totBoughtOrMintedDUBLRWEI.mul(Math.floor(maxSlippageFrac)).div(1e6);
+    summaryLabels.push("Min w/ slippage:");
+    summaryValues.push(weiToDisplay(minimumTokensToBuyOrMintDUBLRWEI, "DUBLR", priceUSDPerCurrency));
+
     result += makeSubTable(summaryLabels, summaryValues);
     
     // Convert lines to HTML and push out to execution plan element in UI
     dataflow.set({
         executionPlan_out: result,
         minimumTokensToBuyOrMintDUBLRWEI: minimumTokensToBuyOrMintDUBLRWEI,
-        slippageLimitWarning_out: slippageWarningText
     });
     return totBoughtOrMintedDUBLRWEI;
 }
@@ -680,8 +686,12 @@ async function updateWalletUI(provider, wallet, balanceETHWEI, balanceDUBLRWEI, 
 }
 
 async function buyButtonParams(dublr, buyAmountETHWEI, minimumTokensToBuyOrMintDUBLRWEI,
-        allowBuying, allowMinting, termsBuy_in) {
-    const disabled = !dublr || !buyAmountETHWEI
+        amountBoughtEstDUBLRWEI, allowBuying, allowMinting, termsBuy_in) {
+    const disabled = !dublr
+        // Double-check that the ETH amount is nonzero
+        || !buyAmountETHWEI || buyAmountETHWEI.eq(0)
+        // Require that the buy simulation was able to buy a nonzero amount of DUBLR
+        || !amountBoughtEstDUBLRWEI || amountBoughtEstDUBLRWEI.eq(0)
         || !minimumTokensToBuyOrMintDUBLRWEI || allowBuying === undefined || allowMinting === undefined
         || !termsBuy_in;
     document.getElementById("buyButton").disabled = disabled;
@@ -704,15 +714,12 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     dataflow.register(
         constrainBuyMintCheckboxes, buyAmountETHWEI,
-        
         provider, dublr, balanceETHWEI, balanceDUBLRWEI,
         mintPriceETHPerDUBLR_x1e9, priceUSDPerCurrency,
         buyingEnabled, sellingEnabled, mintingEnabled,
         orderBook, mySellOrder, minSellOrderValueETHWEI,
-        gasFeeDataETHWEI,
-        
+        gasFeeDataETHWEI, maxSlippageFrac,
         gasEstETHWEI, amountBoughtEstDUBLRWEI,
-        
         updateWalletUI, buyButtonParams,
     );
 
