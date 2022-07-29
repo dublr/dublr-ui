@@ -1,0 +1,42 @@
+
+@import url(http://fonts.googleapis.com/css?family=Maven+Pro);
+
+h1 { font-weight: normal; }
+
+:disabled { background-color: WhiteSmoke; }
+
+.warning-text {
+    color: red;
+    font-size: 11pt;
+}
+.warning-text-large {
+    color: red;
+    font-size: 13pt;
+}
+
+table.alt-bg tr:nth-child(even) {
+    background: #ebebeb;
+}
+table.no-alt-bg tr:nth-child(even) {
+    background: none;
+}
+td {
+    padding: 0.2em 0.4em 0.2em 0.4em;
+}
+.num-label {
+    text-align: right;
+}
+.num {
+    font-family: monospace;
+}
+.num, .num-label {
+    /*
+       Linear font size interpolation -- calculated using:
+       https://css-tricks.com/linearly-scale-font-size-with-css-clamp-based-on-the-viewport/
+       Min / max viewport width: 360 / 790
+       Min / max font size: 0.5 / 1
+       1 rem = 16px
+    */
+    font-size: clamp(0.6rem, 0.2471rem + 1.5686vw, 1rem);
+}
+

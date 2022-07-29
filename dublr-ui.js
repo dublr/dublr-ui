@@ -55,6 +55,67 @@ function ethToDublr(price_x1e9, amtETH) {
     return amtETH.mul(1e9).div(price_x1e9);
 }
 
+const dollarRegexp = /[-]?[0-9]*([.][0-9][0-9])?/;
+
+function formatDollars(amt) {
+    const matches = amt.match(dollarRegexp);
+    if (!matches) {
+        return undefined;
+    }
+    return matches[0]; // Rounds down to nearest 1c by truncation
+}
+
+// Format to 12 significant figures, but keep all figures before the decimal.
+// Truncates (rounds down) at the last digit.
+function formatSF(num) {
+    const targetSF = 12;
+    let numSF = 0;
+    let hitDot = false;
+    let out = "";
+    for (var i = 0; i < num.length; i++) {
+        const c = num.charAt(i);
+        if (c == ".") {
+            hitDot = true;
+            if (numSF >= targetSF) {
+                break;
+            }
+        } else {
+            if (hitDot && numSF >= targetSF) {
+                break;
+            }
+            if (!isNaN(c)) {
+                // Count all digits on left of decimal
+                numSF++;
+            }
+        }
+        out += c;            
+    }
+    return out;
+}
+
+function weiToDisplay(amtWEI, currency, priceUSDPerCurrency) {
+    if (amtWEI === undefined) {
+        return "(unknown)";
+    }
+    const amtWEIStr = formatSF(ethers.utils.formatEther(amtWEI));
+    let amtUSDFormatted;
+    if (priceUSDPerCurrency !== undefined) {
+        const price = currency === "ETH" ? priceUSDPerCurrency.eth : priceUSDPerCurrency.dublr;
+        if (price !== undefined) {
+            const priceUSDPerCurrency_x1e9 = Math.floor(price * 1e9);
+            const amtUSDWEI = amtWEI.mul(priceUSDPerCurrency_x1e9).div(1e9);
+            const amtUSDStr = formatSF(ethers.utils.formatEther(amtUSDWEI));
+            amtUSDFormatted = formatDollars(amtUSDStr);
+        }
+    }
+    return amtWEIStr + " " + currency
+            + (amtUSDFormatted === undefined ? "" : " (≈" + amtUSDFormatted + " USD)");
+}
+
+function ethToWei(eth) {
+    return ethers.utils.parseEther(eth);
+}
+
 async function safe(promise) {
     try {
         const result = await promise;
@@ -63,6 +124,25 @@ async function safe(promise) {
         console.log(e);
         return undefined;
     }
+}
+
+function makeSubTable(keys, values) {
+    let html = "<table class='no-alt-bg' style='margin-left: auto; margin-right: auto;'>";
+    html += "<tbody>";
+    if (keys.length !== values.length) {
+        throw new Error("keys.length !== values.length");
+    }
+    for (var i = 0; i < values.length; i++) {
+        const label = keys[i];
+        const value = values[i];
+        html += "<tr>";
+        html += "<td class='num-label'>" + keys[i] + "</td>";
+        html += "<td class='num'>" + values[i] + "</td>";
+        html += "</tr>";
+    }
+    html += "</tbody>";
+    html += "</table>";
+    return html;
 }
 
 // Dataflow inputs from Dublr contract ----------------------------------------------
@@ -91,123 +171,234 @@ async function provider(chainId) {
 
 async function dublr(provider, wallet) {
     if (!provider || !wallet) {
-        dataflow.set({networkError: ""});
+        dataflow.set({
+            networkInfo_out: "",
+            networkInfoIsWarning_out: false,
+            etherscanURL_out: "https://github.com/dublr/dublr"
+        });
         return undefined;
     }
+    
+    const network = await safe(provider.getNetwork());
+    const networkNameRaw = !network || network.name === "" ? "(Unknown)"
+        : network.name === "homestead" ? "mainnet" : network.name;
+    const networkName = networkNameRaw.charAt(0).toUpperCase() + networkNameRaw.slice(1);
+    
     const contract = new ethers.Contract(dublrAddr, dublrABI, provider);
     // Check DUBLR contract is deployed on this network
     const code = await safe(provider.getCode(dublrAddr));
     if (code && code.length <= 2) {
         // If code is "0x" then there is no contract currently deployed at address
-        const network = await safe(provider.getNetwork());
-        const networkName = !network || network.name === "" ? "(Unknown network)"
-            : network.name === "homestead" ? "mainnet" : network.name;
-        const networkNameCapd = networkName.charAt(0).toUpperCase() + networkName.slice(1);
-        dataflow.set({networkError: "The Dublr contract is not deployed on " + networkNameCapd});
+        dataflow.set({
+            networkInfo_out: "The Dublr contract is not deployed on " + networkName,
+            networkInfoIsWarning_out: true,
+            etherscanURL_out: "https://github.com/dublr/dublr"
+        });
         return undefined;
     } else {
-        dataflow.set({networkError: ""});
+        const url = networkName === "(Unknown)" ? ""
+                : networkName === "Mainnet" ? "https://etherscan.io/address/" + dublrAddr
+                : "https://" + networkName.toLowerCase() + ".etherscan.io/address/" + dublrAddr;
+        dataflow.set({
+            networkInfo_out: "Blockchain network: <span class='num'>" + networkName + "</span>",
+            networkInfoIsWarning_out: false,
+            etherscanURL_out: url
+        });
         return contract.connect(provider.getSigner());
     }
 }
 
-async function buyingEnabled(dublr) {
+async function buyingEnabled(dublr, dublrStateTrigger) {
     return !dublr ? undefined : await safe(dublr.callStatic.buyingEnabled());
 }
 
-async function sellingEnabled(dublr) {
+async function sellingEnabled(dublr, dublrStateTrigger) {
     return !dublr ? undefined : await safe(dublr.callStatic.sellingEnabled());
 }
 
-async function mintingEnabled(dublr) {
+async function mintingEnabled(dublr, dublrStateTrigger) {
     return !dublr ? undefined : await safe(dublr.callStatic.mintingEnabled());
 }
 
-async function ethBalance(provider, wallet, dublrStateTrigger) {
+async function balanceETHWEI(provider, wallet, dublrStateTrigger) {
     return !provider || !wallet ? undefined : await safe(provider.getBalance(wallet));
 }
 
-async function dublrBalance(dublr, wallet, dublrStateTrigger) {
+async function balanceDUBLRWEI(dublr, wallet, dublrStateTrigger) {
     return !dublr || !wallet ? undefined : await safe(dublr.callStatic.balanceOf(wallet));
-}
-
-// Update mint price every 60 seconds
-setInterval(() => dataflow.set({ mintPriceTimerTrigger: Date.now() }), 60 * 1000);
-
-async function mintPriceETHPerDUBLR_x1e9(dublr, mintPriceTimerTrigger) {
-    if (!dublr) {
-        dataflow.set({mintPrice: "unknown"});  // Pushed to UI
-        return undefined;        
-    } else {
-        const mintPrice_x1e9 = await safe(dublr.callStatic.mintPrice());
-        if (mintPrice_x1e9 === undefined) {
-            dataflow.set({mintPrice: "unknown"});
-            return undefined;
-        }
-        dataflow.set({mintPrice: formatPrice(mintPrice_x1e9) + " ETH per DUBLR"});  // Pushed to UI
-        return mintPrice_x1e9;
-    }
-}
-
-async function orderBookSize(dublr, dublrStateTrigger) {
-    if (!dublr) {
-        return undefined;
-    }
-    const size = await safe(dublr.callStatic.orderBookSize());
-    return !size ? undefined : ethers.BigNumber.from(size).toNumber();
-}
-
-async function orderBook(dublr, orderBookSize, dublrStateTrigger) {
-    if (!dublr || orderBookSize === undefined) {
-        dataflow.set({orderbookRows: ""});
-        return undefined;
-    }
-    
-    // Get and sort orderbook entries
-    let orderBookEntries = [];
-    if (orderBookSize > 0) {
-        orderBookEntries = await safe(dublr.callStatic.allSellOrders());
-        if (orderBookEntries === undefined) {
-            dataflow.set({orderbookRows: ""});
-            return undefined;
-        }
-        // TODO: check sorting works in increasing order of price
-        orderBookEntries.sort((a, b) => a.priceETHPerDUBLR_x1e9.lt(b.priceETHPerDUBLR_x1e9) ? -1 : 1);
-    }
-
-    // Update UI with orderbook entries
-    let tbody = "";    
-    let cumulAmtETH = ethers.BigNumber.from(0);
-    for (const order of orderBookEntries) {
-        const amtETH = dublrToEth(order.priceETHPerDUBLR_x1e9, order.amountDUBLRWEI);
-        cumulAmtETH = cumulAmtETH.add(amtETH);
-        tbody += "<trow><td align=\"right\"><tt>" + formatPrice(order.priceETHPerDUBLR_x1e9)
-                + "</tt></td><td align=\"right\"><tt>" + ethers.utils.formatEther(order.amountDUBLRWEI)
-                + "</tt></td><td align=\"right\"><tt>" + ethers.utils.formatEther(amtETH)
-                + "</tt></td><td align=\"right\"><tt>" + ethers.utils.formatEther(cumulAmtETH)
-                + "</tt></td></trow>";
-    }
-    dataflow.set({orderbookRows: tbody});
-
-    return orderBookEntries;
-}
-
-async function mySellOrder(dublr, dublrStateTrigger) {
-    if (dublr) {
-        const order = await safe(dublr.callStatic.mySellOrder());
-        if (order && !order.priceETHPerDUBLR_x1e9.isZero() && !order.amountDUBLRWEI.isZero()) {
-            return order;
-        }
-    }
-    return undefined;
 }
 
 async function minSellOrderValueETHWEI(dublr, dublrStateTrigger) {
     return !dublr ? undefined : await safe(dublr.callStatic.minSellOrderValueETHWEI());
 }
 
-async function gasPriceETHWEI(provider) {
-    return !provider ? undefined : await safe(provider.getGasPrice());
+// Timer that fires every 60 seconds to trigger the mint price and ETH price updates
+setInterval(() => dataflow.set({ priceTimerTrigger: Date.now() }), 60 * 1000);
+
+// Update mint price every 60 seconds
+async function mintPriceETHPerDUBLR_x1e9(dublr, dublrStateTrigger, priceTimerTrigger) {
+    if (!dublr) {
+        dataflow.set({mintPrice_out: "(unknown)"});  // Pushed to UI
+        return undefined;        
+    } else {
+        const mintPrice_x1e9 = await safe(dublr.callStatic.mintPrice());
+        if (mintPrice_x1e9 === undefined) {
+            dataflow.set({mintPrice_out: "(unknown)"});
+            return undefined;
+        }
+        dataflow.set({ mintPrice_out: formatPrice(mintPrice_x1e9) + " ETH per DUBLR"});  // Pushed to UI
+        return mintPrice_x1e9;
+    }
+}
+
+// From https://dmitripavlutin.com/timeout-fetch-request/
+async function fetchWithTimeout(resource, options = {}) {
+  const { timeout = 8000 } = options;
+  
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  const response = await fetch(resource, {
+    ...options,
+    signal: controller.signal  
+  });
+  clearTimeout(id);
+  return response;
+}
+
+// Update price of USD per ETH and USD per DUBLR every 60 seconds
+async function priceUSDPerCurrency(priceTimerTrigger) {
+    var price = {};
+    try {
+        const response = await fetchWithTimeout(
+                "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,dublr&vs_currencies=usd",
+                { timeout: 3000 });
+        const json = await response.json();
+        const parsedEthPrice = Number.parseFloat(json?.ethereum?.usd);
+        price.eth = isNaN(parsedEthPrice) ? undefined : parsedEthPrice;
+        const parsedDublrPrice = Number.parseFloat(json?.dublr?.usd);
+        price.dublr = isNaN(parsedDublrPrice) ? undefined : parsedDublrPrice;
+    } catch (e) {
+        const err = e.message === "The user aborted a request." ? "CoinGecko API timeout" : e;
+        console.log("Could not fetch ETH price:", err);
+    }
+    return price;
+}
+
+async function orderBook(dublr, mySellOrder, mintPriceETHPerDUBLR_x1e9, priceUSDPerCurrency, dublrStateTrigger) {
+    if (!dublr) {
+        dataflow.set({
+            orderbookTable_out: "",
+            orderBookNote_out: "(No Dublr contract on this network)"
+        });
+        return undefined;
+    }
+    
+    // Get and sort orderbook entries
+    let orderBookEntries = await safe(dublr.callStatic.allSellOrders());
+    if (orderBookEntries === undefined) {
+        dataflow.set({
+            orderbookTable_out: "",
+            orderBookNote_out: "(Could not read orderbook)"
+        });
+        return undefined;
+    } else if (orderBookEntries.length === 0) {
+        dataflow.set({
+            orderbookTable_out: "",
+            orderBookNote_out: "(Orderbook is empty)"
+        });
+        return [];
+    }
+    
+    // TODO: check sorting works in increasing order of price
+    orderBookEntries.sort((a, b) => a.priceETHPerDUBLR_x1e9.lt(b.priceETHPerDUBLR_x1e9) ? -1 : 1);
+
+    // Update UI with orderbook entries
+    let tableRows = "";    
+    let note = "";
+    let cumulAmtETHWEI = ethers.BigNumber.from(0);
+    let matchedMySellOrder = false;
+    for (var idx = 0; idx < orderBookEntries.length; idx++) {
+        var sellOrder = orderBookEntries[idx];
+        // Check if order matches the wallet's own sell order
+        const sellOrderMatches = mySellOrder !== undefined
+                && mySellOrder.priceETHPerDUBLR_x1e9.eq(sellOrder.priceETHPerDUBLR_x1e9)
+                && mySellOrder.amountDUBLRWEI.eq(sellOrder.amountDUBLRWEI);
+        const isMySellOrder = sellOrderMatches && !matchedMySellOrder;
+        if (isMySellOrder) {
+            matchedMySellOrder = true;
+            note = "➡️ : Your active sell order";
+        }
+        const aboveMintPrice = mintPriceETHPerDUBLR_x1e9 !== undefined
+                && sellOrder.priceETHPerDUBLR_x1e9.gt(mintPriceETHPerDUBLR_x1e9);
+        if (aboveMintPrice) {
+            note += (note.length === 0 ? "" : "<br/>")
+                + "🔺 : Sell order is priced above mint price (can't be bought yet)";
+        }
+        const amtETHWEI = dublrToEth(sellOrder.priceETHPerDUBLR_x1e9, sellOrder.amountDUBLRWEI);
+        cumulAmtETHWEI = cumulAmtETHWEI.add(amtETHWEI);
+        tableRows +=
+            // Set font-family so that the emoji isn't monochrome
+            "<tr><td style='border-right: 1px solid silver;'>"
+            + "<span style='font-family: \"Maven Pro\";'>"
+            + (isMySellOrder ? "➡️<br/>" : "") + (aboveMintPrice ? "🔺<br/>" : "") + "</span>#"
+            + (idx + 1) + ":</td><td>" + makeSubTable(
+                ["Price (ETH per DUBLR):", "Amount (DUBLR):", "Value (ETH):", "Cumul Value (ETH):"],
+                [
+                    formatPrice(sellOrder.priceETHPerDUBLR_x1e9),
+                    weiToDisplay(sellOrder.amountDUBLRWEI, "DUBLR", priceUSDPerCurrency),
+                    weiToDisplay(amtETHWEI, "ETH", priceUSDPerCurrency),
+                    weiToDisplay(cumulAmtETHWEI, "ETH", priceUSDPerCurrency)
+                ]
+        ) + "</td></tr>";
+    }
+    // TODO:
+    const tableHTML =
+        "<table style='margin-left: auto; margin-right: auto; "
+        + "border-collapse: separate; border-spacing: 0 .5em;'>"
+        + "<tbody>" + tableRows + "</tbody></table>";
+    dataflow.set({ orderbookTable_out: tableHTML, orderBookNote_out: note });
+
+    return orderBookEntries;
+}
+
+async function mySellOrder(dublr, priceUSDPerCurrency, dublrStateTrigger) {
+    if (!dublr) {
+        dataflow.set({ mySellOrderTable_out: "", noSellOrderListed_out: "(None)", cancelSellViz_out: "none" });
+        return undefined;
+    }
+    const sellOrder = await safe(dublr.callStatic.mySellOrder());
+    if (sellOrder && !sellOrder.priceETHPerDUBLR_x1e9.isZero() && !sellOrder.amountDUBLRWEI.isZero()) {
+        const amtETHWEI = dublrToEth(sellOrder.priceETHPerDUBLR_x1e9, sellOrder.amountDUBLRWEI);
+        const amtLessFeeETHWEI = amtETHWEI.mul(9985).div(10000);  // Subtract 0.15% fee
+        const tableHTML = makeSubTable(
+            ["Price (ETH per DUBLR):", "Amount (DUBLR):", "Value (ETH):", "Value after fee (ETH):"],
+            [
+                formatPrice(sellOrder.priceETHPerDUBLR_x1e9),
+                weiToDisplay(sellOrder.amountDUBLRWEI, "DUBLR", priceUSDPerCurrency),
+                weiToDisplay(amtETHWEI, "ETH", priceUSDPerCurrency),
+                weiToDisplay(amtLessFeeETHWEI, "ETH", priceUSDPerCurrency)
+            ]
+        );
+        dataflow.set({ mySellOrderTable_out: tableHTML, noSellOrderListed_out: "", cancelSellViz_out: "block" });
+        return sellOrder;
+    }
+}
+
+async function minSellOrderValueETHWEI(dublr, priceUSDPerCurrency, dublrStateTrigger) {
+    if (!dublr) {
+        dataflow.set({ minSellOrderValue_out: "(unknown)" });
+         return undefined;
+    }
+    const val = await safe(dublr.callStatic.minSellOrderValueETHWEI());
+    dataflow.set({
+        minSellOrderValue_out: val === undefined ? "(unknown)"
+            : weiToDisplay(val, "ETH", priceUSDPerCurrency)
+    });
+    return val;
+}
+
+async function gasFeeDataETHWEI(provider, dublrStateTrigger) {
+    return !provider ? undefined : await safe(provider.getFeeData());
 }
 
 // Validation functions for dataflow input from DOM -----------------------------
@@ -216,26 +407,25 @@ let oldAllowBuying = true;
 let oldAllowMinting = true;
 
 // Force at least one of the buy or mint checkboxes to be checked
-async function constrainBuyMintCheckboxes(allowBuyingUI, allowMintingUI) {
-    let allowBuying = allowBuyingUI === undefined ? true : allowBuyingUI;
-    let allowMinting = allowMintingUI === undefined ? true : allowMintingUI;
-    if (allowBuying === false && allowMinting === false) {
-        allowBuying = !oldAllowBuying;
-        allowMinting = !oldAllowMinting;
+async function constrainBuyMintCheckboxes(allowBuying, allowMinting) {
+    let ab = allowBuying === undefined ? true : allowBuying;
+    let am = allowMinting === undefined ? true : allowMinting;
+    if (ab === false && am === false) {
+        ab = !oldAllowBuying;
+        am = !oldAllowMinting;
     }
     // Push outputs (this also potentially triggers the checkboxes to update, forcing at least one on)
-    dataflow.set({ allowBuying: allowBuying, allowMinting: allowMinting,
-                   allowBuyingUI: allowBuying, allowMintingUI: allowMinting });
-    oldAllowBuying = allowBuying;
-    oldAllowMinting = allowMinting;
+    dataflow.set({ allowBuying: ab, allowMinting: am });
+    oldAllowBuying = ab;
+    oldAllowMinting = am;
 }
 
-async function buyAmountETHWEI(buyAmountUI, ethBalance) {
+async function buyAmountETHWEI(buyAmount_in, minSellOrderValueETHWEI, balanceETHWEI, priceUSDPerCurrency) {
     let warningText = "";
     let amountETHWEI;
-    if (buyAmountUI !== undefined) {
+    if (buyAmount_in !== undefined) {
         try {
-            amountETHWEI = ethers.utils.parseEther(buyAmountUI);
+            amountETHWEI = ethToWei(buyAmount_in);
         } catch (e) {
             warningText = "Not a number";
         }
@@ -243,77 +433,34 @@ async function buyAmountETHWEI(buyAmountUI, ethBalance) {
             if (!amountETHWEI.gt(0)) {
                 warningText = "Amount must be greater than zero";
                 amountETHWEI = undefined;
-            } else if (ethBalance === undefined) {
+            } else if (balanceETHWEI === undefined) {
                 // Only output amount if ETH balance of wallet is known, since the amount
                 // has to be smaller than the balance. But still clear the warning text.
                 amountETHWEI = undefined;
-            } else if (!amountETHWEI.lt(ethBalance)) {
+            } else if (!amountETHWEI.lt(balanceETHWEI)) {
                 warningText = "Amount must be less than wallet ETH balance";
                 // The amount specified is unusable, so don't propagate it
                 amountETHWEI = undefined;
+            } else if (minSellOrderValueETHWEI !== undefined && amountETHWEI.lt(minSellOrderValueETHWEI)) {
+                warningText = "You may buy this amount; however, since this is less than the minimum sell order value of "
+                    + weiToDisplay(minSellOrderValueETHWEI, "ETH", priceUSDPerCurrency)
+                    + ", then you will not be able to sell these tokens on the Dublr DEX, unless you sell for a high"
+                    + " enough price or buy more. You may or may not be able to sell smaller orders elsewhere.";
             }
         }
     }
     // Update UI
-    dataflow.set({buyAmountWarning: warningText});
+    dataflow.set({buyAmountWarning_out: warningText});
     return amountETHWEI;
-}
-
-async function maxGasToProvideETHWEI(maxGasToProvideUI, gasEstETHWEI) {
-    if (maxGasToProvideUI === undefined) {
-        dataflow.set({maxGasToProvideWarning: ""});
-        return undefined;
-    }
-    let warningText = "";
-    let gasETHWEI;
-    if (maxGasToProvideUI.length > 0) {
-        try {
-            gasETHWEI = ethers.utils.parseEther(maxGasToProvideUI);
-        } catch (e) {
-            warningText = "Not a number";
-        }
-        if (gasETHWEI !== undefined) {
-            if (!gasETHWEI.gt(0)) {
-                warningText = "Gas must be greater than zero";
-                gasETHWEI = undefined;
-            } else if (gasEstETHWEI != undefined && gasETHWEI.lt(gasEstETHWEI)) {
-                warningText = "Gas is lower than estimate; transaction may not complete, or may stop early";
-            }
-        }
-    }
-    // Update UI
-    dataflow.set({maxGasToProvideWarning: warningText});
-    return gasETHWEI;
-}
-
-async function minimumTokensToBuyOrMintDUBLRWEI(amountBoughtEstDUBLRWEI, maxSlippageUI) {
-    if (maxSlippageUI === undefined) {
-        dataflow.set({minDublr: undefined, slippageLimitWarning: ""});    
-        return undefined;
-    }
-    let warningText = "";
-    let minAmountETHWEI;
-    const maxSlippagePercent = Number(maxSlippageUI);
-    if (isNaN(maxSlippagePercent)) {
-        warningText = "Not a number";
-    } else if (maxSlippagePercent < 0 || maxSlippagePercent > 100) {
-        warningText = "Invalid percentage";
-    } else if (amountBoughtEstDUBLRWEI !== undefined) {
-        const slippageFrac = 1e4 * (100 - maxSlippagePercent); // Percentage times 1e6 fixed point base
-        minAmountETHWEI = amountBoughtEstDUBLRWEI.mul(Math.floor(slippageFrac)).div(1e6);
-    }
-    const minDublr = minAmountETHWEI === undefined ? "" : ethers.utils.formatEther(minAmountETHWEI);
-    dataflow.set({minDublr: minDublr, slippageLimitWarning: warningText});    
-    return minAmountETHWEI;
 }
 
 // Gas estimation and simulation of buy -----------------------------------
 
-async function gasEstETHWEI(provider, dublr, buyAmountETHWEI, allowBuying, allowMinting,
-        gasPriceETHWEI, ethBalance) {
+async function gasEstETHWEI(provider, dublr, gasFeeDataETHWEI, buyAmountETHWEI, balanceETHWEI,
+        allowBuying, allowMinting, priceTimerTrigger) {
     if (!provider || !dublr || !buyAmountETHWEI || allowBuying === undefined || allowMinting === undefined
-            || !gasPriceETHWEI || !ethBalance) {
-        dataflow.set({gasEstUI: undefined, maxGasToProvideUI: undefined, gasEstWarning: ""});
+            || !gasFeeDataETHWEI || !balanceETHWEI) {
+        dataflow.set({ gasEstWarning_out: "" });
         return undefined;
     }
     const blockNumber = await safe(provider.getBlockNumber());
@@ -324,68 +471,73 @@ async function gasEstETHWEI(provider, dublr, buyAmountETHWEI, allowBuying, allow
     const gasLimit = block.gasLimit;
     let gasEstETHWEI;
     let gasEstETH;
-    let maxGasToProvideUI;
     let warningText = "";
     try {
         const gasEstRaw = await dublr.estimateGas.buy(
-                // Set minimumTokensToBuyOrMintDUBLRWEI to 0 to prevent transaction reverting due to slippage
-                0,
+                0, // Allow any amount of slippage
                 allowBuying, allowMinting,
                 // Simulate sending the specified amount of ETH, with gas limit set to prev block gas limit
                 {value: buyAmountETHWEI, gasLimit: gasLimit});
+        // Get gas price -- options: gasPrice, maxFeePerGas, maxPriorityFeePerGas
+        const gasPriceETHWEI = gasFeeDataETHWEI.maxFeePerGas;
         // Calculate gas expenditure by multiplying by gas price
         gasEstETHWEI = gasEstRaw.mul(gasPriceETHWEI);
-        // Calculate gas estimate for UI
-        gasEstUI = ethers.utils.formatEther(gasEstETHWEI);
-        // Calculate max gas to provide, by adding 33% to gas amount
-        const gasEstETHWEIWithMargin = gasEstETHWEI.mul(4).div(3);
-        // Overwrite value in "Max gas to provide" field with latest computed value
-        maxGasToProvideUI = ethers.utils.formatEther(gasEstETHWEIWithMargin);
+        // Warn if ETH amount plus estimated gas is less than ETH balance
+        if (buyAmountETHWEI !== undefined && balanceETHWEI !== undefined
+                && !gasEstETHWEI.add(buyAmountETHWEI).lt(balanceETHWEI)) {
+            warningText = "Insufficient ETH balance for amount to spend plus estimated gas";
+        }
     } catch (e) {
-        const reason = e.reason ? e.reason : e.error?.message ? e.error.message : "unknown reason";
-        if (reason.startsWith("insufficient funds")) {
-            warningText = "Insufficient ETH balance for amount plus gas";
+        const reason = e.reason ? e.reason : e?.message ? e.message
+                : e.error?.message ? e.error.message : "unknown reason";
+        if (reason.includes("insufficient funds")) {
+            warningText = "Insufficient ETH balance for amount to spend plus estimated gas";
         } else if (reason.includes("out of gas")) {
             warningText = "Hit max gas limit, try buying a smaller amount";
-        } else if (reason.startsWith("execution reverted")) {
+        } else if (reason.includes("execution reverted")) {
             warningText = reason;
         } else {
             console.log("Could not estimate gas", e);
             warningText = "Could not estimate gas: " + reason;
         }
     }
-    dataflow.set({gasEstUI: gasEstUI, maxGasToProvideUI: maxGasToProvideUI, gasEstWarning: warningText});
+
+    dataflow.set({ gasEstWarning_out: warningText });
     return gasEstETHWEI;
 }
 
-async function amountBoughtEstDUBLRWEI(ethBalance, buyAmountETHWEI, allowBuying, allowMinting,
-        buyingEnabled, mintingEnabled, orderBook, mySellOrder, mintPriceETHPerDUBLR_x1e9) {
-    if (ethBalance === undefined || buyAmountETHWEI === undefined
+async function amountBoughtEstDUBLRWEI(balanceETHWEI, buyAmountETHWEI, allowBuying, allowMinting,
+        buyingEnabled, mintingEnabled, orderBook, mySellOrder, maxSlippage_in,
+        mintPriceETHPerDUBLR_x1e9, gasEstETHWEI, priceUSDPerCurrency) {
+    if (balanceETHWEI === undefined || buyAmountETHWEI === undefined
             || allowBuying === undefined || allowMinting === undefined
             || orderBook === undefined || mintPriceETHPerDUBLR_x1e9 === undefined) {
-        dataflow.set({expectedDublr: undefined, executionPlanLines: ""});
+        dataflow.set({
+            executionPlan_out: "",
+            minimumTokensToBuyOrMintDUBLRWEI: undefined,
+            slippageLimitWarning_out: ""
+        });
         return undefined;
     }
-    if (!buyAmountETHWEI.lt(ethBalance)) {
-        dataflow.set({expectedDublr: undefined,
-                executionPlanLines: "\"Amount to spend\" must be less than wallet ETH balance"});
-        return undefined;
-    }
-    let result = [];
+    let result = "<b>Simulating buy function with current orderbook:</b><br/>"
+    result += "<ul style='margin-top: 8px; margin-bottom: 8px;'>";
     if (orderBook.length == 0) {
-        result.push("Orderbook is empty");
+        result += "<li>Orderbook is empty</li>";
+    }
+    if (allowMinting && mintPriceETHPerDUBLR_x1e9.eq(0)) {
+        result += "<li>Minting period has ended; minting is no longer available</li>";
     }
     if (allowBuying && !buyingEnabled) {
-        result.push("Buying of sell orders is currently disabled");
+        result += "<li>Buying of sell orders is currently disabled</li>";
     }
     if (!allowBuying && buyingEnabled) {
-        result.push("You disallowed buying");
+        result += "<li>You disallowed buying</li>";
     }
     if (allowMinting && !mintingEnabled) {
-        result.push("Minting of new tokens is currently disabled");
+        result += "<li>Minting of new tokens is currently disabled</li>";
     }
     if (!allowMinting && mintingEnabled) {
-        result.push("You disallowed minting");
+        result += "<li>You disallowed minting</li>";
     }
     // The following is the _buy_stateUpdater method from Dublr.sol, rewritten in JS but without gas checks
     // or seller payment logic. This had to be ported because estimateGas can't return any contract state.
@@ -398,6 +550,8 @@ async function amountBoughtEstDUBLRWEI(ethBalance, buyAmountETHWEI, allowBuying,
     let ownSellOrder;
     let skipMinting = false;
     let skippedBuying = true;
+    let tableRows = "";
+    let numBought = 0;
     while (buyingEnabled && allowBuying && buyOrderRemainingETHWEI.gt(0) && orderBookCopy.length > 0) {
         skippedBuying = false;
         const sellOrder = orderBookCopy[0];
@@ -406,7 +560,7 @@ async function amountBoughtEstDUBLRWEI(ethBalance, buyAmountETHWEI, allowBuying,
                 && mySellOrder.amountDUBLRWEI.eq(sellOrder.amountDUBLRWEI)) {
             ownSellOrder = sellOrder;
             orderBookCopy.shift();
-            result.push("Skipping own sell order");
+            result += "<li>Skipping own sell order</li>";
             continue;
         }
         if (mintPriceETHPerDUBLR_x1e9.gt(0)
@@ -431,11 +585,14 @@ async function amountBoughtEstDUBLRWEI(ethBalance, buyAmountETHWEI, allowBuying,
         totBoughtOrMintedDUBLRWEI = totBoughtOrMintedDUBLRWEI.add(amountToBuyDUBLRWEI);
         buyOrderRemainingETHWEI = buyOrderRemainingETHWEI.sub(amountToChargeBuyerETHWEI);
         totSpentETHWEI = totSpentETHWEI.add(amountToChargeBuyerETHWEI);
-        result.push("Buy: " + ethers.utils.formatEther(amountToBuyDUBLRWEI) + " DUBLR");
-        result.push("&nbsp;&nbsp;&nbsp;&nbsp;at price: "
-                + formatPrice(sellOrder.priceETHPerDUBLR_x1e9) + " ETH per DUBLR");
-        result.push("&nbsp;&nbsp;&nbsp;&nbsp;for cost: "
-                + ethers.utils.formatEther(amountToChargeBuyerETHWEI) + " ETH");
+        numBought++;
+        tableRows += "<tr><td>"
+            + makeSubTable(["Buy:", "at price:", "for cost:"],
+                [
+                    weiToDisplay(amountToBuyDUBLRWEI, "DUBLR", priceUSDPerCurrency),
+                    formatPrice(sellOrder.priceETHPerDUBLR_x1e9) + " ETH per DUBLR",
+                    weiToDisplay(amountToChargeBuyerETHWEI, "ETH", priceUSDPerCurrency)
+                ]) + "</td></tr>";
     }
     if (mintingEnabled && allowMinting && !skipMinting
             && mintPriceETHPerDUBLR_x1e9.gt(0) && buyOrderRemainingETHWEI.gt(0)) {
@@ -447,55 +604,91 @@ async function amountBoughtEstDUBLRWEI(ethBalance, buyAmountETHWEI, allowBuying,
             buyOrderRemainingETHWEI = buyOrderRemainingETHWEI.sub(amountToMintETHWEI);
             totSpentETHWEI = totSpentETHWEI.add(amountToMintETHWEI);
             if (!skippedBuying) {
-                result.push("Ran out of sell orders; switching to minting");
+                result += "<li>Ran out of sell orders after buying " + numBought + " orders; switched to minting</li>";
             }
-            result.push("Mint: " + ethers.utils.formatEther(amountToMintDUBLRWEI) + " DUBLR");
-            result.push("&nbsp;&nbsp;&nbsp;&nbsp;at price: " + formatPrice(mintPriceETHPerDUBLR_x1e9)
-                    + " ETH per DUBLR");
-            result.push("&nbsp;&nbsp;&nbsp;&nbsp;for cost: " + ethers.utils.formatEther(amountToMintETHWEI)
-                    + " ETH");
+            tableRows += "<tr><td>"
+                + makeSubTable(["Mint:", "at price:", "for cost:"],
+                    [
+                        weiToDisplay(amountToMintDUBLRWEI, "DUBLR", priceUSDPerCurrency),
+                        formatPrice(mintPriceETHPerDUBLR_x1e9) + " ETH per DUBLR",
+                        weiToDisplay(amountToMintETHWEI, "ETH", priceUSDPerCurrency)
+                    ]) + "</td></tr>";
         }
     }
-    result.push("Total to spend: " + ethers.utils.formatEther(buyAmountETHWEI.sub(buyOrderRemainingETHWEI))
-            + " ETH");
-    if (buyOrderRemainingETHWEI > 0) {
-        result.push("Change to refund: " + ethers.utils.formatEther(buyOrderRemainingETHWEI) + " ETH");
+    if (tableRows.length > 0) {
+        result += "<li>Steps completed:</li>";
     }
+    result += "</ul>";
+    if (tableRows.length > 0) {
+        result += "<table style='margin-left: auto; margin-right: auto; margin-top: 0; "
+            + "border-collapse: separate; border-spacing: 0 .5em;'>"
+            + "<tbody>" + tableRows + "</tbody></table>";
+    }
+    result += "</ul>";
+    result += "<div style='margin-top: 12px; margin-bottom: 8px;'><b>Result:</b></div>";
+    let summaryLabels = [];
+    let summaryValues = [];
+    const totalToSpendETHWEI = buyAmountETHWEI.sub(buyOrderRemainingETHWEI);
+    summaryLabels.push("Total to spend:");
+    summaryValues.push(weiToDisplay(totalToSpendETHWEI, "ETH", priceUSDPerCurrency));
+    if (buyOrderRemainingETHWEI > 0) {
+        summaryLabels.push("Change to refund:");
+        summaryValues.push(weiToDisplay(buyOrderRemainingETHWEI, "ETH", priceUSDPerCurrency));
+    }
+    if (gasEstETHWEI !== undefined) {
+        summaryLabels.push("Gas estimate:");
+        summaryValues.push(weiToDisplay(gasEstETHWEI, "ETH", priceUSDPerCurrency));
+    }
+    summaryLabels.push("Total to receive:");
+    summaryValues.push(weiToDisplay(totBoughtOrMintedDUBLRWEI, "DUBLR", priceUSDPerCurrency));
+    let minimumTokensToBuyOrMintDUBLRWEI;
+    let slippageWarningText = "";
+    if (maxSlippage_in !== undefined) {
+        let warningText = "";
+        const maxSlippagePercent = Number(maxSlippage_in);
+        if (maxSlippage_in === "" || isNaN(maxSlippagePercent)) {
+            slippageWarningText = "Not a number";
+        } else if (maxSlippagePercent < 0 || maxSlippagePercent > 100) {
+            slippageWarningText = "Invalid percentage";
+        } else if (amountBoughtEstDUBLRWEI !== undefined) {
+            const slippageFrac = 1e4 * (100 - maxSlippagePercent); // Percentage times 1e6 fixed point base
+            minimumTokensToBuyOrMintDUBLRWEI = totBoughtOrMintedDUBLRWEI.mul(Math.floor(slippageFrac)).div(1e6);
+        }
+        summaryLabels.push("Min w/ slippage:");
+        summaryValues.push(weiToDisplay(minimumTokensToBuyOrMintDUBLRWEI, "DUBLR", priceUSDPerCurrency));
+    }
+    result += makeSubTable(summaryLabels, summaryValues);
     
     // Convert lines to HTML and push out to execution plan element in UI
-    let executionPlanLines = "";
-    for (line of result) {
-        if (executionPlanLines.length > 0) {
-            executionPlanLines += "<br/>";
-        }
-        executionPlanLines += line;
-    }
-    dataflow.set({expectedDublr: ethers.utils.formatEther(totBoughtOrMintedDUBLRWEI),
-            executionPlanLines: executionPlanLines});
+    dataflow.set({
+        executionPlan_out: result,
+        minimumTokensToBuyOrMintDUBLRWEI: minimumTokensToBuyOrMintDUBLRWEI,
+        slippageLimitWarning_out: slippageWarningText
+    });
     return totBoughtOrMintedDUBLRWEI;
 }
 
 // UI update functions ----------------------------------------------------
 
-async function updateWalletUI(provider, wallet, ethBalance, dublrBalance) {
-    dataflow.set({walletInfo: 
-        "Wallet <b>" + (wallet ? formatAddress(wallet) : "(not connected)") + "</b> balances:<br/>"
-            + "<b>" + (ethBalance ? ethers.utils.formatEther(ethBalance) : "(unknown)") + "</b> ETH<br/>"
-            + "<b>" + (dublrBalance ? ethers.utils.formatEther(dublrBalance) : "(unknown)") + "</b> DUBLR"
+async function updateWalletUI(provider, wallet, balanceETHWEI, balanceDUBLRWEI, priceUSDPerCurrency) {
+    dataflow.set({walletInfo_out: 
+        "Wallet <span class='num'>" + (wallet ? formatAddress(wallet) : "(not connected)") + "</span> balances:<br/>"
+            + "<span class='num'>" + weiToDisplay(balanceETHWEI, "ETH", priceUSDPerCurrency) + "</span><br/>"
+            + "<span class='num'>" + weiToDisplay(balanceDUBLRWEI, "DUBLR", priceUSDPerCurrency) + "</span><br/>"
+            + "</span>"
     });
 }
 
-async function enableBuyButton(dublr, buyAmountETHWEI, maxGasToProvideETHWEI, gasPriceETHWEI,
-        minimumTokensToBuyOrMintDUBLRWEI, allowBuying, allowMinting, termsBuy) {
-    const disabled = !dublr || !buyAmountETHWEI || !maxGasToProvideETHWEI || !gasPriceETHWEI
+async function buyButtonParams(dublr, buyAmountETHWEI, minimumTokensToBuyOrMintDUBLRWEI,
+        allowBuying, allowMinting, termsBuy_in) {
+    const disabled = !dublr || !buyAmountETHWEI
         || !minimumTokensToBuyOrMintDUBLRWEI || allowBuying === undefined || allowMinting === undefined
-        || !termsBuy;
+        || !termsBuy_in;
     document.getElementById("buyButton").disabled = disabled;
     return disabled ? undefined : {
         // Group all dependencies together in a single object, so that they can be accessed
         // atomically by the buy button's onclick handler
         dublr: dublr, buyAmountETHWEI: buyAmountETHWEI,
-        gasLimit: maxGasToProvideETHWEI.div(gasPriceETHWEI),
         minimumTokensToBuyOrMintDUBLRWEI: minimumTokensToBuyOrMintDUBLRWEI,
         allowBuying: allowBuying, allowMinting: allowMinting
     };
@@ -507,66 +700,107 @@ window.addEventListener("DOMContentLoaded", async () => {
     
     // Register dataflow functions -------------------------------------------
     
-    DEBUG_DATAFLOW = true;
+    // DEBUG_DATAFLOW = true;
 
     dataflow.register(
-        constrainBuyMintCheckboxes, buyAmountETHWEI, maxGasToProvideETHWEI,
-        minimumTokensToBuyOrMintDUBLRWEI,
+        constrainBuyMintCheckboxes, buyAmountETHWEI,
         
-        provider, dublr, ethBalance, dublrBalance, mintPriceETHPerDUBLR_x1e9,
+        provider, dublr, balanceETHWEI, balanceDUBLRWEI,
+        mintPriceETHPerDUBLR_x1e9, priceUSDPerCurrency,
         buyingEnabled, sellingEnabled, mintingEnabled,
-        orderBookSize, orderBook, mySellOrder, minSellOrderValueETHWEI,
-        gasPriceETHWEI,
+        orderBook, mySellOrder, minSellOrderValueETHWEI,
+        gasFeeDataETHWEI,
         
         gasEstETHWEI, amountBoughtEstDUBLRWEI,
         
-        updateWalletUI, enableBuyButton,
+        updateWalletUI, buyButtonParams,
     );
+
+    // Seed the dataflow graph with initial price estimates
+    dataflow.set({ priceTimerTrigger: 0 });
     
-    // Register all reactive elements to set the corresponding input in the dataflow graph based on id
+    // Register all reactive elements to set the corresponding input in the dataflow graph based on id.
+    // Seeds the dataflow graph with the initial values of input elements in the UI.
     dataflow.connectToDOM();
 
     // Hook up action buttons ----------------------------------------------------------
     
-    // TODO: why does clicking Buy result in the page being reloaded?
-    
-    document.getElementById("buyButton").onclick = () => {
-        const buyParams = dataflow.value.enableBuyButton;
+    document.getElementById("buyButton").onclick = async (event) => {
+        event.preventDefault();
+        await dataflow.set({});  // Wait for dataflow to end, so that buyButtonParams is most recent version
+        const buyParams = dataflow.value.buyButtonParams;
         if (buyParams) {
-            try {
-                buyParams.dublr.buy(buyParams.minimumTokensToBuyOrMintDUBLRWEI,
-                        buyParams.allowBuying, buyParams.allowMinting,
-                        {value: buyParams.buyAmountETHWEI, gasLimit: buyParams.gasLimit});
-                dataflow.set({buyError: ""});
-            } catch (e) {
-                let warningText = "";
-                const reason = e.reason ? e.reason : e.error?.message ? e.error.message : "unknown reason";
-                if (reason.startsWith("insufficient funds")) {
-                    warningText = "Insufficient ETH balance for amount plus gas";
-                } else if (reason.includes("out of gas")) {
-                    warningText = "Ran out of gas, try buying a smaller amount or increase max gas";
-                } else if (reason.startsWith("execution reverted")) {
-                    warningText = reason;
-                } else {
-                    console.log(e);
-                    warningText = "Could not buy tokens: " + reason;
+            // This can take a while to run, since calling a contract via MetaMask requires user interaction.
+            // Launch this in a new Promise, and don't wait for the result, so that dataflow is not held up.
+            new Promise(async () => {
+                try {
+                    dataflow.set({
+                        buyStatus_out: "",
+                        buyStatusIsWarning_out: false
+                    });
+                    // Call the Dublr `buy` function
+                    await buyParams.dublr.buy(
+                            buyParams.minimumTokensToBuyOrMintDUBLRWEI,
+                            buyParams.allowBuying, buyParams.allowMinting,
+                            // Don't provide a gas limit, because MetaMask ignores it anyway
+                            // and calculates gas itself
+                            { value: buyParams.buyAmountETHWEI }
+                    );
+                    dataflow.set({
+                        buyStatus_out: "Transaction submitted successfully",
+                        buyStatusIsWarning_out: false
+                    });
+                } catch (e) {
+                    let warningText = "";
+                    const reason = e.reason ? e.reason : e?.message ? e.message
+                            : e.error?.message ? e.error.message : "unknown reason";
+                    if (reason.includes("insufficient funds")) {
+                        warningText = "Insufficient ETH balance for amount to spend plus gas";
+                    } else if (reason.includes("out of gas")) {
+                        warningText = "Ran out of gas, try buying a smaller amount";
+                    } else if (reason.includes("execution reverted")) {
+                        warningText = reason;
+                    } else if (reason.includes("User denied transaction")) {
+                        warningText = "Transaction rejected by user";
+                    } else {
+                        console.log(e);
+                        warningText = "Could not buy tokens: " + reason;
+                    }
+                    dataflow.set({
+                        buyStatus_out: "Previous result: " + warningText,
+                        buyStatusIsWarning_out: true
+                    });
                 }
-                dataflow.set({buyError: warningText});
-            }
+            });
         }
     };
 
-    // MetaMask Onboarding flow (modified from docs) -----------------------------------
     
+    document.getElementById("cancelSellOrderButton").onclick = async (event) => {
+        event.preventDefault();
+        await dataflow.set({});
+    }
+
+    // MetaMask onboarding / connection with wallet -----------------------------------
+    
+    // Push wallet changes and chainId changes into the dataflow graph
+    // (this allows the UI to work with account changes and chainId changes without reloading)
+    const setAccounts = async (accounts) => {
+        dataflow.set({ wallet: accounts?.length > 0 ? accounts[0] : undefined });
+    };
+    const setChainId = async (chainId) => {
+        dataflow.set({ chainId: chainId });
+    };
+    
+    // Onboarding flow (modified from docs)
     const onboarding = new MetaMaskOnboarding();
     const onboardButton = document.getElementById("onboard");
     const onboardText = document.getElementById("onboard-text");
-    let notOriginallyConnected = false;
+    let notOriginallyInstalled = false;
     let listenersAdded = false;
-    let accounts;
     const updateButton = async () => {
         if (!MetaMaskOnboarding.isMetaMaskInstalled()) {
-            notOriginallyConnected = true;
+            notOriginallyInstalled = true;
             onboardText.innerText = "Click here to install MetaMask";
             onboardButton.onclick = () => {
                 onboardText.innerText = "Waiting for MetaMask to be installed";
@@ -575,22 +809,28 @@ window.addEventListener("DOMContentLoaded", async () => {
             };
         } else {
             if (!listenersAdded) {
+                // Add account change listeners only once
                 window.ethereum.on("accountsChanged", async (accounts) => {
+                    setAccounts(accounts);
                     await updateButton();
                 });
-                window.ethereum.on("chainChanged", (chainId) => {
-                    dataflow.set({chainId: chainId});
+                window.ethereum.on("chainChanged", async (chainId) => {
+                    setChainId(chainId);
+                    await updateButton();
                 });
                 window.ethereum.on("disconnect", (error) => {
-                    console.log(error);
+                    // https://docs.metamask.io/guide/ethereum-provider.html#events
+                    // "In general, this will only happen due to network connectivity issues
+                    // or some unforeseen error." (Just log and ignore this.)
+                    console.log("MetaMask disconnected", error);
                 });
+                listenersAdded = true;
             }
-            // Test if connected without actually requesting accounts
-            accounts = await window.ethereum.request({method: "eth_accounts"});
-            // Use first account as the wallet
-            let wallet = accounts && accounts.length > 0 ? accounts[0] : undefined;
-            dataflow.set({ wallet: wallet });
-            if (wallet) {
+            // Test if connected without actually requesting accounts --
+            // eth_accounts does not pop up MetaMask UI
+            const accounts = await window.ethereum.request({method: "eth_accounts"});
+            setAccounts(accounts);
+            if (accounts?.length > 0) {
                 onboardText.innerText = "Connected to MetaMask wallet";
                 onboardButton.disabled = true;
                 onboarding.stopOnboarding();
@@ -598,7 +838,7 @@ window.addEventListener("DOMContentLoaded", async () => {
                 const metaMaskProvider = new ethers.providers.Web3Provider(window.ethereum);
                 dataflow.set({chainId: (await metaMaskProvider.getNetwork()).chainId});
                 
-                if (notOriginallyConnected) {
+                if (notOriginallyInstalled) {
                     // Only try adding token if MetaMask was not originally installed
                     // (i.e. MetaMask installation will serve as a proxy for determining whether DUBLR
                     // token was already added to wallet)
@@ -623,13 +863,14 @@ window.addEventListener("DOMContentLoaded", async () => {
                 onboardText.innerText = "Connect to MetaMask wallet";
                 onboardButton.disabled = false;
                 onboardButton.onclick = async () => {
-                    // Pop up the MetaMask wallet
-                    accounts = await window.ethereum.request({method: "eth_requestAccounts"});
+                    // eth_requestAccounts pops up the MetaMask wallet
+                    const accounts = await window.ethereum.request({method: "eth_requestAccounts"});
+                    setAccounts(accounts);
                     await updateButton();
                 };
             }
         }
     };
-    await updateButton();
+    updateButton();
 });
 
