@@ -119,7 +119,7 @@ function weiToDisplay(amtWEI, currency, priceUSDPerCurrency) {
         }
     }
     return amtWEIStr + " " + currency
-            + (amtUSDFormatted === undefined ? "" : " (≈" + amtUSDFormatted + " USD)");
+            + (amtUSDFormatted === undefined ? "" : " (~" + amtUSDFormatted + " USD)");
 }
 
 function ethToWei(eth) {
@@ -695,8 +695,9 @@ async function amountBoughtEstDUBLRWEI(balanceETHWEI, buyAmountETHWEI, allowBuyi
 // UI update functions ----------------------------------------------------
 
 async function updateWalletUI(provider, wallet, balanceETHWEI, balanceDUBLRWEI, priceUSDPerCurrency) {
-    dataflow.set({walletInfo_out: 
-        "Wallet <span class='num'>" + (wallet ? formatAddress(wallet) : "(not connected)") + "</span> balances:<br/>"
+    dataflow.set({
+        walletInfo_out: !wallet ? "" : 
+        "Wallet <span class='num'>" + formatAddress(wallet) + "</span> balances:<br/>"
             + "<span class='num'>" + weiToDisplay(balanceETHWEI, "ETH", priceUSDPerCurrency) + "</span><br/>"
             + "<span class='num'>" + weiToDisplay(balanceDUBLRWEI, "DUBLR", priceUSDPerCurrency) + "</span><br/>"
             + "</span>"
@@ -832,7 +833,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             notOriginallyInstalled = true;
             if (isMobile()) {
                 // Mobile onboarding
-                onboardText.innerText = "Open in Metamask Browser";
+                onboardText.innerText = "Open in MetaMask Browser";
                 onboardButton.onclick = () => window.location.href = DEEP_LINK_URL;
             } else {
                 // Desktop onboarding

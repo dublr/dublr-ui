@@ -1,0 +1,44 @@
+@import "http://fonts.googleapis.com/css?family=Maven+Pro";
+h1 {
+  font-weight: normal;
+}
+
+:disabled {
+  background-color: #f5f5f5;
+}
+
+.warning-text {
+  color: red;
+  font-size: 11pt;
+}
+
+.warning-text-large {
+  color: red;
+  font-size: 13pt;
+}
+
+table.alt-bg tr:nth-child(2n) {
+  background: #ebebeb;
+}
+
+table.no-alt-bg tr:nth-child(2n) {
+  background: none;
+}
+
+td {
+  padding: .2em .4em;
+}
+
+.num-label {
+  text-align: right;
+}
+
+.num {
+  font-family: monospace;
+}
+
+.num, .num-label {
+  font-size: clamp(.6rem, .2471rem + 1.5686vw, 1rem);
+}
+
+/*# sourceMappingURL=index.fe55ad14.css.map */
